@@ -7,5 +7,6 @@ struct WindowsScaleInfo { uint32_t current, recommended, maximum; };
 WindowsScaleInfo decodeWindowsScale(int32_t minimumRelative, int32_t currentRelative, int32_t maximumRelative);
 int32_t relativeWindowsScale(const WindowsScaleInfo& info, uint32_t percent);
 WindowsScaleInfo windowsScale(const std::wstring& monitorKey); // Read-only; may reject custom/global scaling.
+std::wstring windowsScaleDiagnostics(const std::wstring& monitorKey); // Read-only raw packet/range details, including failures.
 void setWindowsScale(const std::wstring& monitorKey, uint32_t percent); // Resolve source afresh after topology changes.
 }

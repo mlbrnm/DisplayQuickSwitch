@@ -26,7 +26,7 @@ Starting the application, creating/editing presets, and opening diagnostics **do
 - Global NVIDIA frame limiter: disabled or a cap up to the public SDK's limit of 1023 FPS.
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
-- Read-only diagnostics with GPU, driver, monitor identities, current modes, and selected global policy values.
+- Read-only diagnostics with GPU, driver, monitor identities, current modes, selected global policy values, and raw Windows DPI offsets/source IDs for troubleshooting.
 - Original NVIDIA-green cat-in-a-cog icon, with a settings-slider face, embedded in the tray, executable, and dialogs. Multiple sizes keep it sharp at different Windows scale factors.
 
 Blank resolution/refresh/FPS fields and **Leave unchanged** options do not override those settings. FPS `0` explicitly disables the limiter. Resolution must have both dimensions supplied, or both blank.
@@ -41,6 +41,8 @@ Presets and bounded error logs are stored in:
 The editor saves presets atomically as UTF-16 LE. Monitor matching uses the Windows monitor device interface path, **not** a transient `DISPLAY1` number. Moving a monitor to another port/adapter can change that identity; edit and reselect it if needed. There are no bundled presets that assume which screen is your CRT.
 
 Existing presets remain compatible: a missing `WindowsScalePercent` field means **leave Windows scaling unchanged**. Saving with the new editor adds the field. Capture includes the selected monitor's Windows scale when available; if Windows cannot report it, that field stays unchanged. A scale requested by a preset is applied after the display mode/primary-monitor change, verified, and included in timeout/manual restoration.
+
+Windows DPI range handling follows [SetDPI](https://github.com/imniko/SetDPI): a reported current offset outside the supported range is clamped when decoding it, and the maximum can be below the recommended scale. This avoids rejecting valid percentages merely because an offset is stale or the recommendation exceeds the current maximum. **Requested preset percentages are never silently clamped** to a different value. If a switch still fails, copy the affected monitor's `DPI CCD` line from **Read-only diagnostics** and the new error text; these include the raw offsets needed to identify an unrecognized range or a Windows API failure.
 
 ## Important limitations and safety
 
@@ -83,7 +85,7 @@ For Visual Studio 2022, use `-G "Visual Studio 17 2022"` in a separate build dir
 
 - `qs_tests`: parsing, fractional refresh, layout rebasing and overflow, preset validation, Unicode serialization, atomic file replacement, invalid configuration rejection.
 - `qs_backend_tests`: staged validation, primary switching, global setting mappings, partial display/save failures, unexpected changes to another monitor, rollback of display and driver state, restoration failure/retry, unchanged settings, and preservation of unrelated settings. It links **fake NVAPI functions instead of NVIDIA's library**.
-- Windows scaling tests additionally cover relative/absolute percentage conversion, old-preset compatibility, per-monitor targeting, DPI capture, partial failures, readback mismatch, restoration/retry, and the no-op path. `qs_windows_scaling_tests` exercises the actual DPI packet implementation against **fake CCD/registry APIs**, including source-ID changes, unsupported ranges, cloning, and custom-scaling rejection.
+- Windows scaling tests additionally cover relative/absolute percentage conversion, old-preset compatibility, per-monitor targeting, DPI capture, partial failures, readback mismatch, restoration/retry, and the no-op path. `qs_windows_scaling_tests` exercises the actual DPI packet implementation against **fake CCD/registry APIs**, including source-ID changes, unsupported ranges, cloning, and custom-scaling rejection. Regression cases also exercise setting 100% with a negative maximum offset, setting values when the reported current offset is stale, and retaining raw offsets in failure diagnostics.
 
 Neither test executable can apply real NVIDIA settings. `tests/tray_smoke.ps1` additionally launches the real tray, measures a fixed idle interval, checks that the NVAPI driver DLL is not loaded at startup, and closes its own instance gracefully. It never selects a preset. Run it only when the tray is not already running:
 
@@ -109,3 +111,4 @@ The checked-in ICO is compiled directly into the executable; generation tools an
 
 - [NVIDIA public NVAPI SDK](https://github.com/NVIDIA/nvapi), pinned to `70d337db9186e968eab622f7e786de7e437faf3d`.
 - [NVIDIA Profile Inspector](https://github.com/Orbmu2k/nvidiaProfileInspector), used as a reference for driver policy behavior. This app does not embed or launch Profile Inspector.
+- [SetDPI](https://github.com/imniko/SetDPI), used as a reference for Windows DPI packet/range handling. This app does not embed or launch SetDPI or perform its legacy `AppliedDPI` registry write.

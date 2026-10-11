@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(NvidiaQuickSwitch VERSION 0.2.0 LANGUAGES CXX RC)
+project(NvidiaQuickSwitch VERSION 0.2.1 LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Build with the Microsoft C++ toolchain for Windows x64.")
 endif()

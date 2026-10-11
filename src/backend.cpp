@@ -384,7 +384,7 @@ void Transaction::restore() {
 }
 std::wstring diagnostics() {
     std::wostringstream out;
-    out << L"Nvidia Quick Switch 0.2.0 — read-only diagnostics\r\n\r\n";
+    out << L"Nvidia Quick Switch 0.2.1 — read-only diagnostics\r\n\r\n";
     Api api;
     NvU32 version = 0; NvAPI_ShortString branch{};
     check(NvAPI_SYS_GetDriverAndBranchVersion(&version, branch), "Read driver version");
@@ -401,6 +401,7 @@ std::wstring diagnostics() {
             << m.key << L"\r\n" << p.width << L" x " << p.height << L" @ " << formatRefresh(p.refreshMilliHz)
             << L" Hz; scaling=" << static_cast<int>(p.scaling) << L"\r\n"
             << L"Windows scaling: " << (p.windowsScalePercent ? std::to_wstring(p.windowsScalePercent) + L"%" : L"unavailable (custom scaling or unsupported API)") << L"\r\n"
+            << windowsScaleDiagnostics(m.key) << L"\r\n"
             << L"Global G-SYNC=" << static_cast<int>(p.gsync) << L"; V-SYNC=" << static_cast<int>(p.vsync)
             << L"; FPS=" << p.maxFps << L"\r\n";
     }

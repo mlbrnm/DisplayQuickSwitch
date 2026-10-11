@@ -1,5 +1,6 @@
 #include "windows_scaling.h"
 #include <windows.h>
+#include <sstream>
 #ifdef QS_TEST_DPI
 #include "windows_scaling_test_api.h"
 #define GetDisplayConfigBufferSizes qs::testDpi::bufferSizes
@@ -20,6 +21,10 @@ static_assert(sizeof(GetScalePacket) == 32);
 static_assert(sizeof(SetScalePacket) == 24);
 constexpr auto GetScaleType = static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(-3);
 constexpr auto SetScaleType = static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(-4);
+std::string rawValues(const GetScalePacket& packet) {
+    return "source=" + std::to_string(packet.header.id) + ", min=" + std::to_string(packet.minimum) +
+        ", current=" + std::to_string(packet.current) + ", max=" + std::to_string(packet.maximum);
+}
 void checkWindows(LONG status, const char* operation) {
     if (status != ERROR_SUCCESS) throw std::runtime_error(std::string(operation) + " (Windows error " + std::to_string(status) + ").");
 }
@@ -70,11 +75,32 @@ void setWindowsScale(const std::wstring& key, uint32_t percent) {
     // Query after any mode/primary change: both the source ID and recommended/max scale can change.
     const auto current = readScale(key);
     const auto info = decodeWindowsScale(current.minimum, current.current, current.maximum);
-    const auto relative = relativeWindowsScale(info, percent); // Reject, never clamp to a different percentage.
+    int32_t relative = 0;
+    try { relative = relativeWindowsScale(info, percent); } // Reject requested percentages, never silently substitute one.
+    catch (const std::exception& e) { throw std::runtime_error(std::string(e.what()) + " CCD: " + rawValues(current)); }
     if (info.current == percent) return;
     SetScalePacket packet{};
     packet.header = {SetScaleType, sizeof(packet), current.header.adapterId, current.header.id};
     packet.relative = relative;
-    checkWindows(DisplayConfigSetDeviceInfo(&packet.header), "Apply per-monitor Windows scaling");
+    const auto operation = "Apply per-monitor Windows scaling " + std::to_string(percent) + "% (" + rawValues(current) + ")";
+    checkWindows(DisplayConfigSetDeviceInfo(&packet.header), operation.c_str());
+}
+std::wstring windowsScaleDiagnostics(const std::wstring& key) {
+    std::wostringstream out;
+    try {
+        const auto packet = readScale(key);
+        out << L"DPI CCD source=" << packet.header.id << L" adapter=" << packet.header.adapterId.HighPart << L":" << packet.header.adapterId.LowPart
+            << L"; raw min=" << packet.minimum << L", current=" << packet.current << L", max=" << packet.maximum;
+        const auto info = decodeWindowsScale(packet.minimum, packet.current, packet.maximum);
+        out << L"; current=" << info.current << L"%, recommended=" << info.recommended << L"%, maximum=" << info.maximum << L"%";
+        if (packet.current < packet.minimum || packet.current > packet.maximum) out << L" (reported current offset clamped to range, as in SetDPI)";
+    } catch (const std::exception& e) {
+        const auto length = MultiByteToWideChar(CP_UTF8, 0, e.what(), -1, nullptr, 0);
+        std::wstring message(static_cast<size_t>(length > 0 ? length : 1), L'\0');
+        if (length > 0) MultiByteToWideChar(CP_UTF8, 0, e.what(), -1, message.data(), length);
+        message.pop_back();
+        out << L"; Windows scaling query failed: " << message;
+    }
+    return out.str();
 }
 }

@@ -51,6 +51,7 @@ WindowsScaleInfo windowsScale(const std::wstring& key) {
     if (fake::scalingUnavailable) throw std::runtime_error("Simulated unsupported DPI API / custom scaling.");
     return {fake::scales.at(key), 150, 500};
 }
+std::wstring windowsScaleDiagnostics(const std::wstring&) { return L"Fake DPI diagnostics"; }
 void setWindowsScale(const std::wstring& key, uint32_t percent) {
     const auto info = windowsScale(key); relativeWindowsScale(info, percent);
     if (info.current == percent) return;

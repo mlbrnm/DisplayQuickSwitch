@@ -7,6 +7,7 @@
 
 namespace fakeDpi {
 int failures = 0, writes = 0, relative = 0;
+int minimum = -2, maximum = 5;
 bool custom = false, cloned = false, unavailable = false;
 bool bufferRace = false;
 UINT32 sourceId = 17;
@@ -18,6 +19,7 @@ void expect(bool value, const char* label) { if (!value) { std::cerr << "FAIL: "
 void rejects(const std::function<void()>& fn, const char* label) { try { fn(); expect(false, label); } catch (const std::exception&) {} }
 void reset() {
     writes = relative = 0; custom = cloned = unavailable = bufferRace = false;
+    minimum = -2; maximum = 5;
     sourceId = 17; writtenSource = 0; registryStatus = setStatus = ERROR_SUCCESS;
 }
 }
@@ -49,7 +51,7 @@ LONG getDevice(DISPLAYCONFIG_DEVICE_INFO_HEADER* header) {
     fakeDpi::expect(header->id == fakeDpi::sourceId || header->id == fakeDpi::sourceId + 1, "query uses source ID, not target ID");
     if (fakeDpi::unavailable) return ERROR_NOT_SUPPORTED;
     auto packet = reinterpret_cast<fakeDpi::GetPacket*>(header);
-    packet->min = -2; packet->current = fakeDpi::relative; packet->max = 5; // Recommended 150%, max 300%.
+    packet->min = fakeDpi::minimum; packet->current = fakeDpi::relative; packet->max = fakeDpi::maximum;
     return ERROR_SUCCESS;
 }
 LONG setDevice(DISPLAYCONFIG_DEVICE_INFO_HEADER* header) {
@@ -88,6 +90,23 @@ int main() {
         registryStatus = ERROR_FILE_NOT_FOUND; expect(windowsScale(L"crt").current == 200, "missing custom-scaling value is allowed");
         registryStatus = ERROR_SUCCESS; setStatus = ERROR_ACCESS_DENIED;
         rejects([] { setWindowsScale(L"crt", 175); }, "Windows setter error propagates for transaction rollback");
+        reset(); minimum = -4; maximum = -1; relative = 0;
+        // A resolution change may leave the recommended/current scale beyond the new maximum.
+        expect(windowsScale(L"lcd").current == 175 && windowsScale(L"lcd").recommended == 200, "SetDPI-compatible lower maximum and clamped current");
+        setWindowsScale(L"lcd", 100);
+        expect(writes == 1 && relative == -4 && windowsScale(L"lcd").current == 100, "100 percent sends exact minimum offset despite negative max");
+        expect(windowsScaleDiagnostics(L"lcd").find(L"raw min=-4, current=-4, max=-1") != std::wstring::npos, "diagnostics include raw DPI packet values");
+        relative = 3;
+        expect(windowsScaleDiagnostics(L"lcd").find(L"clamped") != std::wstring::npos, "diagnostics explain stale current offset");
+        setWindowsScale(L"lcd", 125);
+        expect(relative == -3 && windowsScale(L"lcd").current == 125, "125 percent works with stale out-of-range current");
+        relative = -99;
+        setWindowsScale(L"lcd", 150);
+        expect(relative == -2 && windowsScale(L"lcd").current == 150, "setting works with stale current below minimum");
+        rejects([] { setWindowsScale(L"lcd", 200); }, "unsupported requested percentage still not silently clamped");
+        maximum = 20;
+        expect(windowsScaleDiagnostics(L"lcd").find(L"max=20") != std::wstring::npos &&
+               windowsScaleDiagnostics(L"lcd").find(L"query failed") != std::wstring::npos, "failed decoding preserves raw diagnostics");
     } catch (const std::exception& e) { std::cerr << "Unexpected: " << e.what() << '\n'; ++failures; }
     if (!failures) std::cout << "Windows scaling API tests passed. All CCD/registry APIs are fake; no real settings changed.\n";
     return failures ? 1 : 0;

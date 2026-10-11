@@ -32,8 +32,14 @@ int main() {
     rejects([&] { relativeWindowsScale(scale, 110); }, "custom DPI percentage");
     rejects([] { decodeWindowsScale(INT32_MIN, 0, INT32_MAX); }, "DPI range overflow");
     rejects([] { decodeWindowsScale(1, 0, 3); }, "positive minimum DPI offset");
-    rejects([] { decodeWindowsScale(-2, -3, 3); }, "DPI below 100 percent");
-    rejects([] { decodeWindowsScale(-2, 4, 3); }, "DPI above supported maximum");
+    expect(decodeWindowsScale(-2, -3, 3).current == 100, "stale DPI current offset below minimum clamps like SetDPI");
+    expect(decodeWindowsScale(-2, 4, 3).current == 225, "stale DPI current offset above maximum clamps like SetDPI");
+    const auto loweredRange = decodeWindowsScale(-4, 0, -1);
+    expect(loweredRange.current == 175 && loweredRange.recommended == 200 && loweredRange.maximum == 175, "maximum may be below recommended step");
+    expect(relativeWindowsScale(loweredRange, 100) == -4, "100 percent remains valid with negative maximum offset");
+    expect(decodeWindowsScale(-2, INT32_MIN, 3).current == 100 && decodeWindowsScale(-2, INT32_MAX, 3).current == 225, "current offset clamping avoids overflow");
+    rejects([] { decodeWindowsScale(-2, 0, -3); }, "absolute maximum below 100 percent is invalid");
+    rejects([] { decodeWindowsScale(-2, 0, 10); }, "unknown maximum step is rejected");
     Preset p; p.name = L"4K 日本語 = test"; p.monitor = L"\\\\?\\DISPLAY#ABC#123";
     p.width = 3840; p.height = 2160; p.refreshMilliHz = 119880;
     p.scaling = Scaling::integer; p.gsync = Gsync::windowed; p.vsync = Vsync::on; p.maxFps = 117;
