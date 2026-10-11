@@ -1,0 +1,22 @@
+#pragma once
+#define IDD_MANAGER 101
+#define IDD_EDITOR 102
+#define IDD_CONFIRM 103
+#define IDD_DIAGNOSTICS 104
+#define IDC_PRESETS 1001
+#define IDC_NEW 1002
+#define IDC_EDIT 1003
+#define IDC_DELETE 1004
+#define IDC_NAME 1010
+#define IDC_MONITOR 1011
+#define IDC_PRIMARY 1012
+#define IDC_WIDTH 1013
+#define IDC_HEIGHT 1014
+#define IDC_REFRESH 1015
+#define IDC_SCALING 1016
+#define IDC_GSYNC 1017
+#define IDC_VSYNC 1018
+#define IDC_FPS 1019
+#define IDC_CAPTURE 1020
+#define IDC_STATUS 1021
+#define IDC_TEXT 1022

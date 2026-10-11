@@ -1,0 +1,35 @@
+# CMake builds and downloaded dependencies
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+
+# Visual Studio local state
+/.vs/
+*.user
+*.suo
+
+# Generated binaries and debugging files
+*.exe
+*.dll
+*.obj
+*.pdb
+*.ilk
+*.lib
+
+# Runtime settings/logs if copied into the repository
+presets.ini
+presets.ini.tmp
+errors.log
+Does build/ contain personal information?
+Potentially, yes—mostly local machine information, not necessarily secrets. CMake-generated files, build logs, and debugging files can contain:
+
+Absolute paths, potentially including your Windows username.
+Compiler, SDK, and Visual Studio installation paths.
+Local environment/configuration details.
+Downloaded NVIDIA SDK files.
+It doesn’t contain your display presets by design. Those live outside the project at %LOCALAPPDATA%\NvidiaQuickSwitch. The application also doesn’t deliberately collect credentials or tokens, but I wouldn’t publish the entire build directory.
+
+Commit the source, tests, CMakeLists.txt, README.md, LICENSE, and .gitignore. If you want to distribute a compiled version, upload NvidiaQuickSwitch.exe and NVIDIA-NVAPI-LICENSE.txt as GitHub Release assets, rather than committing build/.
+
+Note: .gitignore only prevents untracked files from being added; it doesn’t remove files already committed.
