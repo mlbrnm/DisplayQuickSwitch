@@ -2,7 +2,12 @@
 
 A native **Windows x64 tray application** for manually switching display presets on an NVIDIA GPU. Written in C++20/Win32; no .NET runtime, browser engine, resident service, or Profile Inspector installation is required.
 
+I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. I'm one of those crazy people who uses a 4K OLED TV as a monitor so I often like to play at alternate resolutions such as 3840x1600 or 3440x1440 ultrawide, and I also sometimes use a small CRT monitor that requires very different settings from a modern display.
+
 **Status: first working build, tested on an RTX 5000 series GPU / driver 617.42.** 
+
+<img height="200" alt="Screenshot 2026-10-10 210525" src="https://github.com/user-attachments/assets/2eb47b2e-1bab-4472-9e29-5395838bbcaf" />
+<img height="200" alt="quickswitch" src="https://github.com/user-attachments/assets/fd2da02f-3d4a-4e23-8aa9-973f43d3e083" />
 
 ## Run
 
@@ -26,8 +31,9 @@ Starting the application, creating/editing presets, and opening diagnostics **do
 - Global NVIDIA frame limiter: disabled or a cap up to the public SDK's limit of 1023 FPS.
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
-- Read-only diagnostics with GPU, driver, monitor identities, current modes, selected global policy values, and raw Windows DPI offsets/source IDs for troubleshooting.
-- Original NVIDIA-green cat-in-a-cog icon, with a settings-slider face, embedded in the tray, executable, and dialogs. Multiple sizes keep it sharp at different Windows scale factors.
+
+<img width="1450" height="962" alt="Screenshot 2026-10-10 211258" src="https://github.com/user-attachments/assets/fefc4c57-a2bc-4e45-ac19-966bbba70c59" />
+
 
 Blank resolution/refresh/FPS fields and **Leave unchanged** options do not override those settings. FPS `0` explicitly disables the limiter. Resolution must have both dimensions supplied, or both blank.
 
