@@ -4,6 +4,9 @@ A native **Windows x64 tray application** for manually switching display presets
 
 **Status: first working build, tested on an RTX 5000 series GPU / driver 617.42.** 
 
+<img height="200" alt="Screenshot 2026-10-10 210525" src="https://github.com/user-attachments/assets/2eb47b2e-1bab-4472-9e29-5395838bbcaf" />
+<img height="200" alt="quickswitch" src="https://github.com/user-attachments/assets/fd2da02f-3d4a-4e23-8aa9-973f43d3e083" />
+
 ## Run
 
 1. Launch the executable and find the icon in the system tray (possibly inside the overflow menu).
@@ -26,8 +29,10 @@ Starting the application, creating/editing presets, and opening diagnostics **do
 - Global NVIDIA frame limiter: disabled or a cap up to the public SDK's limit of 1023 FPS.
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
-- Read-only diagnostics with GPU, driver, monitor identities, current modes, and selected global policy values.
-- Original NVIDIA-green cat-in-a-cog icon, with a settings-slider face, embedded in the tray, executable, and dialogs. Multiple sizes keep it sharp at different Windows scale factors.
+
+<img height="400" alt="Screenshot 2026-10-10 210535" src="https://github.com/user-attachments/assets/53cb5df1-58ef-4b10-b16e-5dbdd3bc2a60" />
+
+<img height="400" alt="Screenshot 2026-10-10 210544" src="https://github.com/user-attachments/assets/2009f0f9-078f-4653-8b58-f8f528dc43be" />
 
 Blank resolution/refresh/FPS fields and **Leave unchanged** options do not override those settings. FPS `0` explicitly disables the limiter. Resolution must have both dimensions supplied, or both blank.
 
