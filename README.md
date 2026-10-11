@@ -2,6 +2,8 @@
 
 A native **Windows x64 tray application** for manually switching display presets on an NVIDIA GPU. Written in C++20/Win32; no .NET runtime, browser engine, resident service, or Profile Inspector installation is required.
 
+I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. On my large 4K OLED display I often like to play at alternate resolutions such as 3840x1600 ultrawide, and I also sometimes use a small CRT monitor that requires very different settings from a modern display.
+
 **Status: first working build, tested on an RTX 5000 series GPU / driver 617.42.** 
 
 <img height="200" alt="Screenshot 2026-10-10 210525" src="https://github.com/user-attachments/assets/2eb47b2e-1bab-4472-9e29-5395838bbcaf" />
@@ -30,9 +32,8 @@ Starting the application, creating/editing presets, and opening diagnostics **do
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
 
-<img height="400" alt="Screenshot 2026-10-10 210535" src="https://github.com/user-attachments/assets/53cb5df1-58ef-4b10-b16e-5dbdd3bc2a60" />
+<img width="1450" height="962" alt="Screenshot 2026-10-10 211258" src="https://github.com/user-attachments/assets/fefc4c57-a2bc-4e45-ac19-966bbba70c59" />
 
-<img height="400" alt="Screenshot 2026-10-10 210544" src="https://github.com/user-attachments/assets/2009f0f9-078f-4653-8b58-f8f528dc43be" />
 
 Blank resolution/refresh/FPS fields and **Leave unchanged** options do not override those settings. FPS `0` explicitly disables the limiter. Resolution must have both dimensions supplied, or both blank.
 
