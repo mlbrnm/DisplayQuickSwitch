@@ -2,7 +2,7 @@
 
 A native **Windows x64 tray application** for manually switching display presets on an NVIDIA GPU. Written in C++20/Win32; no .NET runtime, browser engine, resident service, or Profile Inspector installation is required.
 
-I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. On my large 4K OLED display I often like to play at alternate resolutions such as 3840x1600 ultrawide, and I also sometimes use a small CRT monitor that requires very different settings from a modern display.
+I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. I'm one of those crazy people who uses a 4K OLED TV as a monitor so I often like to play at alternate resolutions such as 3840x1600 or 3440x1440 ultrawide, and I also sometimes use a small CRT monitor that requires very different settings from a modern display.
 
 **Status: first working build, tested on an RTX 5000 series GPU / driver 617.42.** 
 
