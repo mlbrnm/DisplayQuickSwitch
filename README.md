@@ -87,32 +87,6 @@ ctest --test-dir build -C Release --output-on-failure
 
 For Visual Studio 2022, use `-G "Visual Studio 17 2022"` in a separate build directory. Copy `NvidiaQuickSwitch.exe` and `NVIDIA-NVAPI-LICENSE.txt` together when distributing the build. The NVIDIA driver supplies NVAPI's implementation; driver DLLs are not redistributed.
 
-### Tests
-
-- `qs_tests`: parsing, fractional refresh, layout rebasing and overflow, preset validation, Unicode serialization, atomic file replacement, invalid configuration rejection.
-- `qs_backend_tests`: staged validation, primary switching, global setting mappings, partial display/save failures, unexpected changes to another monitor, rollback of display and driver state, restoration failure/retry, unchanged settings, and preservation of unrelated settings. It links **fake NVAPI functions instead of NVIDIA's library**.
-- Windows scaling tests additionally cover relative/absolute percentage conversion, old-preset compatibility, per-monitor targeting, DPI capture, partial failures, readback mismatch, restoration/retry, and the no-op path. `qs_windows_scaling_tests` exercises the actual DPI packet implementation against **fake CCD/registry APIs**, including source-ID changes, unsupported ranges, cloning, and custom-scaling rejection. Regression cases also exercise setting 100% with a negative maximum offset, setting values when the reported current offset is stale, and retaining raw offsets in failure diagnostics.
-
-Neither test executable can apply real NVIDIA settings. `tests/tray_smoke.ps1` additionally launches the real tray, measures a fixed idle interval, checks that the NVAPI driver DLL is not loaded at startup, and closes its own instance gracefully. It never selects a preset. Run it only when the tray is not already running:
-
-```powershell
-& .\tests\tray_smoke.ps1
-```
-
-Hardware acceptance, monitor-specific G-SYNC behavior, scaling persistence across mode changes, and interaction with the preset editor/confirmation UI still require testing on the target system. For the new Windows scaling feature, first test a known-supported percentage on one monitor and verify timeout/manual restore before combining it with other mode changes.
-
-### Icon artwork
-
-The original icon assets are in `src/assets/`. To regenerate the multi-size ICO and PNG preview using Windows' built-in System.Drawing:
-
-```powershell
-& .\tools\generate-icon.ps1
-```
-
-The checked-in ICO is compiled directly into the executable; generation tools and image libraries are not needed at runtime.
-
-
-
 ## References
 
 - [NVIDIA public NVAPI SDK](https://github.com/NVIDIA/nvapi), pinned to `70d337db9186e968eab622f7e786de7e437faf3d`.
