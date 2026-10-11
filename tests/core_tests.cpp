@@ -40,6 +40,14 @@ int main() {
     expect(decodeWindowsScale(-2, INT32_MIN, 3).current == 100 && decodeWindowsScale(-2, INT32_MAX, 3).current == 225, "current offset clamping avoids overflow");
     rejects([] { decodeWindowsScale(-2, 0, -3); }, "absolute maximum below 100 percent is invalid");
     rejects([] { decodeWindowsScale(-2, 0, 10); }, "unknown maximum step is rejected");
+    LayoutPreset layout{L"CRT only", L"crt", {{L"lcd", false}, {L"crt", true}}};
+    validate(layout);
+    auto badLayout = layout; badLayout.monitors[1].enabled = false;
+    rejects([&] { validate(badLayout); }, "layout cannot disable every display or its primary");
+    badLayout = layout; badLayout.primaryMonitor = L"missing";
+    rejects([&] { validate(badLayout); }, "layout primary must be listed and enabled");
+    badLayout = layout; badLayout.monitors.push_back({L"CRT", true});
+    rejects([&] { validate(badLayout); }, "case-insensitive duplicate monitor identity rejected");
     Preset p; p.name = L"4K 日本語 = test"; p.monitor = L"\\\\?\\DISPLAY#ABC#123";
     p.width = 3840; p.height = 2160; p.refreshMilliHz = 119880;
     p.scaling = Scaling::integer; p.gsync = Gsync::windowed; p.vsync = Vsync::on; p.maxFps = 117;
@@ -53,6 +61,7 @@ int main() {
     wchar_t temp[32768]{}; GetTempPathW(32768, temp);
     auto directory = std::filesystem::path(temp) / (L"NvidiaQuickSwitch-tests-" + std::to_wstring(GetCurrentProcessId()));
     auto file = directory / L"presets.ini";
+    auto layoutFile = directory / L"layouts.ini";
     try {
         expect(loadPresets(file).empty(), "missing file");
         auto unchanged = p; unchanged.name = L"Untouched"; unchanged.width = unchanged.height = unchanged.refreshMilliHz = 0;
@@ -81,6 +90,16 @@ int main() {
         savePresets(file, {}); expect(loadPresets(file).empty(), "empty preset list");
         { std::ofstream out(file, std::ios::binary); out << "not a UTF16 file"; }
         rejects([&] { loadPresets(file); }, "reject malformed encoding");
+        expect(loadLayouts(layoutFile).empty(), "missing layouts file");
+        saveLayouts(layoutFile, {layout});
+        rejects([&] { loadPresets(layoutFile); }, "layout and display-settings formats remain separate");
+        auto loadedLayouts = loadLayouts(layoutFile);
+        expect(loadedLayouts.size() == 1 && loadedLayouts[0].primaryMonitor == L"crt" &&
+               !loadedLayouts[0].monitors[0].enabled && loadedLayouts[0].monitors[1].enabled, "layout round trip");
+        rejects([&] { saveLayouts(layoutFile, {badLayout}); }, "invalid layout cannot overwrite saved layouts");
+        expect(loadLayouts(layoutFile).size() == 1, "invalid layout save preserves existing file");
+        saveLayouts(layoutFile, {}); expect(loadLayouts(layoutFile).empty(), "empty layouts file");
+        std::filesystem::remove(layoutFile);
         std::filesystem::remove(file); std::filesystem::remove(directory);
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; ++failures; }
     if (!failures) std::cout << "All core tests passed. No display or driver APIs were called.\n";

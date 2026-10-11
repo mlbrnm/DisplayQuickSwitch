@@ -1,5 +1,6 @@
 #include "backend.h"
 #include "windows_scaling.h"
+#include "monitor_layout.h"
 #include <windows.h>
 #include <nvapi.h>
 #include <NvApiDriverSettings.h>
@@ -231,6 +232,7 @@ Preset capture(const Monitor& m) {
     return p;
 }
 struct Transaction::Impl {
+    std::unique_ptr<MonitorLayoutTransaction> layout;
     struct Setting { NvU32 id, value; bool userOverride, existed; };
     Topology before;
     std::vector<Setting> settings;
@@ -241,10 +243,16 @@ struct Transaction::Impl {
 };
 Transaction::Transaction() : impl(std::make_unique<Impl>()) {}
 Transaction::~Transaction() = default;
-bool Transaction::needsRestore() const { return impl->displayDirty || impl->driverDirty || impl->windowsScaleDirty; }
+bool Transaction::needsRestore() const { return impl->displayDirty || impl->driverDirty || impl->windowsScaleDirty || (impl->layout && impl->layout->needsRestore()); }
+void Transaction::apply(const LayoutPreset& p) {
+    if (needsRestore()) throw std::runtime_error("Transaction already contains applied settings.");
+    impl->layout = std::make_unique<MonitorLayoutTransaction>();
+    impl->layout->apply(p);
+}
 void Transaction::apply(const Preset& p) {
     validate(p);
     if (needsRestore()) throw std::runtime_error("Transaction already contains applied settings.");
+    impl->layout.reset(); // A reused transaction must not route display-settings undo to an old layout snapshot.
     Api api;
     auto monitor = resolve(p.monitor);
     const auto id = displayId(monitor);
@@ -329,6 +337,7 @@ void Transaction::apply(const Preset& p) {
     }
 }
 void Transaction::restore() {
+    if (impl->layout) { impl->layout->restore(); return; }
     std::string errors;
     // Try all three even when one fails. DPI restoration must not depend on NVAPI initialization.
     if (impl->displayDirty) {
@@ -384,7 +393,7 @@ void Transaction::restore() {
 }
 std::wstring diagnostics() {
     std::wostringstream out;
-    out << L"Nvidia Quick Switch 0.2.1 — read-only diagnostics\r\n\r\n";
+    out << L"Nvidia Quick Switch 0.3.0 — read-only diagnostics\r\n\r\n";
     Api api;
     NvU32 version = 0; NvAPI_ShortString branch{};
     check(NvAPI_SYS_GetDriverAndBranchVersion(&version, branch), "Read driver version");

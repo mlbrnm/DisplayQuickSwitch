@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <commctrl.h>
 #include "resource.h"
 #pragma code_page(65001)
 1 RT_MANIFEST "app.manifest"
@@ -9,13 +10,30 @@ STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Nvidia Quick Switch — presets"
 FONT 9, "Segoe UI"
 BEGIN
-  LTEXT "Presets select a primary display and change global NVIDIA settings.", -1, 10, 9, 290, 20
+  LTEXT "Presets select a primary display and change global NVIDIA settings.", IDC_MANAGER_INFO, 10, 9, 290, 20
   LISTBOX IDC_PRESETS, 10, 32, 219, 106, LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP | WS_BORDER
   PUSHBUTTON "New…", IDC_NEW, 236, 32, 64, 16
   PUSHBUTTON "Edit…", IDC_EDIT, 236, 54, 64, 16
   PUSHBUTTON "Delete", IDC_DELETE, 236, 76, 64, 16
   LTEXT "Changes are saved immediately. Apply presets from the tray menu.", -1, 10, 145, 218, 23
   DEFPUSHBUTTON "Close", IDCANCEL, 236, 148, 64, 18
+END
+
+IDD_LAYOUT_EDITOR DIALOGEX 0, 0, 385, 259
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Monitor layout preset"
+FONT 9, "Segoe UI"
+BEGIN
+  LTEXT "Name", -1, 12, 12, 60, 12
+  EDITTEXT IDC_NAME, 80, 10, 291, 14, ES_AUTOHSCROLL
+  LTEXT "Check the monitors to enable. Unchecked monitors will be disabled.", -1, 12, 35, 360, 20
+  CONTROL "", IDC_LAYOUT_MONITORS, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP, 12, 57, 359, 110
+  LTEXT "Primary monitor", -1, 12, 182, 65, 12
+  COMBOBOX IDC_LAYOUT_PRIMARY, 80, 179, 291, 110, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+  PUSHBUTTON "Capture current layout", IDC_CAPTURE, 12, 207, 115, 18
+  LTEXT "At least one monitor must remain enabled.\nNo NVIDIA policy or DPI settings are edited.", -1, 138, 205, 235, 24
+  DEFPUSHBUTTON "Save", IDOK, 243, 236, 61, 18
+  PUSHBUTTON "Cancel", IDCANCEL, 310, 236, 61, 18
 END
 
 IDD_EDITOR DIALOGEX 0, 0, 350, 317

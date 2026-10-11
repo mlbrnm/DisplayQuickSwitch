@@ -8,10 +8,11 @@
 #include <algorithm>
 #include <fstream>
 #include <thread>
+#include <type_traits>
 
 namespace {
 constexpr UINT TrayMessage = WM_APP + 1, WorkDone = WM_APP + 2;
-constexpr UINT Manage = 200, Restore = 201, Diagnose = 202, Startup = 203, Quit = 204, PresetBase = 10000;
+constexpr UINT Manage = 200, Restore = 201, Diagnose = 202, Startup = 203, Quit = 204, ManageLayouts = 205, PresetBase = 10000, LayoutBase = 11000;
 HINSTANCE instance{};
 std::wstring widen(const char* s) {
     auto n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
@@ -153,38 +154,142 @@ bool editPreset(HWND owner, qs::Preset& p) {
     if (result != IDOK) return false;
     p = std::move(e.preset); return true;
 }
-struct Manager { std::vector<qs::Preset>* presets; std::filesystem::path file; };
+struct LayoutEditor { qs::LayoutPreset preset; std::vector<qs::Monitor> monitors; };
+void fillLayout(HWND d, LayoutEditor& e) {
+    auto list = GetDlgItem(d, IDC_LAYOUT_MONITORS);
+    ListView_DeleteAllItems(list);
+    SendDlgItemMessageW(d, IDC_LAYOUT_PRIMARY, CB_RESETCONTENT, 0, 0);
+    setText(d, IDC_NAME, e.preset.name);
+    for (size_t i = 0; i < e.monitors.size(); ++i) {
+        const auto& monitor = e.monitors[i];
+        auto state = std::find_if(e.preset.monitors.begin(), e.preset.monitors.end(), [&](auto& m) { return _wcsicmp(m.monitor.c_str(), monitor.key.c_str()) == 0; });
+        auto label = monitor.name + (monitor.gdiName.empty() ? L"" : L" (" + monitor.gdiName + L")");
+        LVITEMW item{}; item.mask = LVIF_TEXT; item.iItem = static_cast<int>(i); item.pszText = label.data();
+        ListView_InsertItem(list, &item);
+        auto current = !monitor.connected ? L"Disconnected" : monitor.enabled ? (monitor.primary ? L"Enabled, primary" : L"Enabled") : L"Disabled";
+        ListView_SetItemText(list, static_cast<int>(i), 1, const_cast<wchar_t*>(current));
+        ListView_SetItemText(list, static_cast<int>(i), 2, const_cast<wchar_t*>(monitor.key.c_str()));
+        ListView_SetCheckState(list, static_cast<int>(i), state != e.preset.monitors.end() ? state->enabled : monitor.enabled);
+        SendDlgItemMessageW(d, IDC_LAYOUT_PRIMARY, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        if (_wcsicmp(e.preset.primaryMonitor.c_str(), monitor.key.c_str()) == 0)
+            SendDlgItemMessageW(d, IDC_LAYOUT_PRIMARY, CB_SETCURSEL, i, 0);
+    }
+}
+void captureLayout(LayoutEditor& e, bool refresh = true) {
+    if (refresh) e.monitors = qs::connectedMonitors();
+    e.preset.monitors.clear(); e.preset.primaryMonitor.clear();
+    for (auto& m : e.monitors) {
+        e.preset.monitors.push_back({m.key, m.enabled});
+        if (m.primary) e.preset.primaryMonitor = m.key;
+    }
+}
+INT_PTR CALLBACK layoutEditorProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
+    auto e = reinterpret_cast<LayoutEditor*>(GetWindowLongPtrW(d, DWLP_USER));
+    if (msg == WM_INITDIALOG) {
+        e = reinterpret_cast<LayoutEditor*>(l); SetWindowLongPtrW(d, DWLP_USER, l);
+        auto list = GetDlgItem(d, IDC_LAYOUT_MONITORS);
+        ListView_SetExtendedListViewStyle(list, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        const wchar_t* headings[] = {L"Monitor", L"Current state", L"Stable monitor identity"};
+        const int widths[] = {225, 135, 500};
+        for (int i = 0; i < 3; ++i) {
+            LVCOLUMNW column{}; column.mask = LVCF_TEXT | LVCF_WIDTH; column.pszText = const_cast<wchar_t*>(headings[i]); column.cx = widths[i];
+            ListView_InsertColumn(list, i, &column);
+        }
+        SendDlgItemMessageW(d, IDC_NAME, EM_SETLIMITTEXT, 100, 0);
+        fillLayout(d, *e); centerPrimary(d); return TRUE;
+    }
+    if (msg == WM_COMMAND && e) {
+        auto id = LOWORD(w);
+        if (id == IDCANCEL) { EndDialog(d, IDCANCEL); return TRUE; }
+        if (id == IDC_LAYOUT_PRIMARY && HIWORD(w) == CBN_SELCHANGE) {
+            auto i = SendDlgItemMessageW(d, IDC_LAYOUT_PRIMARY, CB_GETCURSEL, 0, 0);
+            if (i >= 0) ListView_SetCheckState(GetDlgItem(d, IDC_LAYOUT_MONITORS), static_cast<int>(i), TRUE);
+            return TRUE;
+        }
+        if (id == IDOK || id == IDC_CAPTURE) {
+            try {
+                if (id == IDC_CAPTURE) {
+                    e->preset.name = text(d, IDC_NAME); captureLayout(*e); fillLayout(d, *e); return TRUE;
+                }
+                auto p = e->preset; p.name = text(d, IDC_NAME); p.monitors.clear();
+                auto selected = SendDlgItemMessageW(d, IDC_LAYOUT_PRIMARY, CB_GETCURSEL, 0, 0);
+                if (selected < 0 || static_cast<size_t>(selected) >= e->monitors.size()) throw std::runtime_error("Select an enabled primary monitor.");
+                p.primaryMonitor = e->monitors[selected].key;
+                for (size_t i = 0; i < e->monitors.size(); ++i)
+                    p.monitors.push_back({e->monitors[i].key, ListView_GetCheckState(GetDlgItem(d, IDC_LAYOUT_MONITORS), static_cast<int>(i)) != 0});
+                qs::validate(p); e->preset = std::move(p); EndDialog(d, IDOK);
+            } catch (const std::exception& ex) { error(d, ex); }
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+bool editLayout(HWND owner, qs::LayoutPreset& p) {
+    LayoutEditor e{p, qs::connectedMonitors()};
+    if (p.monitors.empty()) { e.preset.name = L"New monitor layout"; captureLayout(e, false); }
+    else for (auto& saved : p.monitors)
+        if (std::none_of(e.monitors.begin(), e.monitors.end(), [&](auto& m) { return _wcsicmp(m.key.c_str(), saved.monitor.c_str()) == 0; }))
+            e.monitors.push_back({saved.monitor, L"Disconnected monitor", L"", false, false, false});
+    if (e.monitors.empty()) throw std::runtime_error("No connected monitors were found.");
+    auto result = DialogBoxParamW(instance, MAKEINTRESOURCEW(IDD_LAYOUT_EDITOR), owner, layoutEditorProc, reinterpret_cast<LPARAM>(&e));
+    if (result == -1) throw std::runtime_error("Cannot create the monitor layout editor.");
+    if (result != IDOK) return false;
+    p = std::move(e.preset); return true;
+}
+struct Manager {
+    std::vector<qs::Preset>* presets;
+    std::vector<qs::LayoutPreset>* layouts;
+    std::filesystem::path file;
+};
 void refreshList(HWND d, const Manager& m, size_t selected = 0) {
     auto list = GetDlgItem(d, IDC_PRESETS); SendMessageW(list, LB_RESETCONTENT, 0, 0);
-    for (auto& p : *m.presets) SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(p.name.c_str()));
-    if (!m.presets->empty()) SendMessageW(list, LB_SETCURSEL, std::min(selected, m.presets->size() - 1), 0);
-    EnableWindow(GetDlgItem(d, IDC_EDIT), !m.presets->empty()); EnableWindow(GetDlgItem(d, IDC_DELETE), !m.presets->empty());
+    auto fill = [&](const auto& presets) {
+        for (auto& p : presets) SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(p.name.c_str()));
+        if (!presets.empty()) SendMessageW(list, LB_SETCURSEL, std::min(selected, presets.size() - 1), 0);
+        EnableWindow(GetDlgItem(d, IDC_EDIT), !presets.empty()); EnableWindow(GetDlgItem(d, IDC_DELETE), !presets.empty());
+    };
+    if (m.layouts) fill(*m.layouts); else fill(*m.presets);
 }
 INT_PTR CALLBACK managerProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
     auto m = reinterpret_cast<Manager*>(GetWindowLongPtrW(d, DWLP_USER));
-    if (msg == WM_INITDIALOG) { SetWindowLongPtrW(d, DWLP_USER, l); refreshList(d, *reinterpret_cast<Manager*>(l)); centerPrimary(d); return TRUE; }
+    if (msg == WM_INITDIALOG) {
+        m = reinterpret_cast<Manager*>(l); SetWindowLongPtrW(d, DWLP_USER, l);
+        if (m->layouts) {
+            SetWindowTextW(d, L"Nvidia Quick Switch — monitor layouts");
+            setText(d, IDC_MANAGER_INFO, L"Layouts enable/disable monitors and choose the primary. No driver/DPI edits.");
+        }
+        refreshList(d, *m); centerPrimary(d); return TRUE;
+    }
     if (msg == WM_COMMAND && m) {
         auto id = LOWORD(w);
         if (id == IDCANCEL) { EndDialog(d, IDCANCEL); return TRUE; }
         if (id == IDC_PRESETS && HIWORD(w) == LBN_DBLCLK) id = IDC_EDIT;
         if (id == IDC_NEW || id == IDC_EDIT || id == IDC_DELETE) {
             try {
-                auto next = *m->presets;
                 auto index = SendDlgItemMessageW(d, IDC_PRESETS, LB_GETCURSEL, 0, 0);
-                if (id != IDC_NEW && (index < 0 || static_cast<size_t>(index) >= next.size())) return TRUE;
-                if (id == IDC_DELETE) {
-                    if (MessageBoxW(d, L"Delete this preset?", L"Nvidia Quick Switch", MB_YESNO | MB_ICONQUESTION) != IDYES) return TRUE;
-                    next.erase(next.begin() + index);
-                } else {
-                    auto p = id == IDC_NEW ? qs::Preset{} : next[index];
-                    if (!editPreset(d, p)) return TRUE;
-                    for (size_t i = 0; i < next.size(); ++i)
-                        if ((id == IDC_NEW || i != static_cast<size_t>(index)) && _wcsicmp(next[i].name.c_str(), p.name.c_str()) == 0)
-                            throw std::runtime_error("Preset names must be unique.");
-                    if (id == IDC_NEW) { index = static_cast<LRESULT>(next.size()); next.push_back(std::move(p)); }
-                    else next[index] = std::move(p);
-                }
-                qs::savePresets(m->file, next); *m->presets = std::move(next);
+                auto change = [&](auto& presets) {
+                    using P = typename std::remove_reference_t<decltype(presets)>::value_type;
+                    auto next = presets;
+                    if (id != IDC_NEW && (index < 0 || static_cast<size_t>(index) >= next.size())) return TRUE;
+                    if (id == IDC_DELETE) {
+                        if (MessageBoxW(d, L"Delete this preset?", L"Nvidia Quick Switch", MB_YESNO | MB_ICONQUESTION) != IDYES) return TRUE;
+                        next.erase(next.begin() + index);
+                    } else {
+                        auto p = id == IDC_NEW ? P{} : next[index];
+                        if constexpr (std::is_same_v<P, qs::LayoutPreset>) { if (!editLayout(d, p)) return TRUE; }
+                        else { if (!editPreset(d, p)) return TRUE; }
+                        for (size_t i = 0; i < next.size(); ++i)
+                            if ((id == IDC_NEW || i != static_cast<size_t>(index)) && _wcsicmp(next[i].name.c_str(), p.name.c_str()) == 0)
+                                throw std::runtime_error("Preset names must be unique.");
+                        if (id == IDC_NEW) { index = static_cast<LRESULT>(next.size()); next.push_back(std::move(p)); }
+                        else next[index] = std::move(p);
+                    }
+                    if constexpr (std::is_same_v<P, qs::LayoutPreset>) qs::saveLayouts(m->file, next);
+                    else qs::savePresets(m->file, next);
+                    presets = std::move(next);
+                    return TRUE;
+                };
+                if (m->layouts) change(*m->layouts); else change(*m->presets);
                 refreshList(d, *m, static_cast<size_t>(std::max<LRESULT>(0, index)));
             } catch (const std::exception& ex) { error(d, ex); }
             return TRUE;
@@ -229,7 +334,9 @@ struct App {
     HWND window{}, confirm{};
     NOTIFYICONDATAW icon{};
     std::vector<qs::Preset> presets;
+    std::vector<qs::LayoutPreset> layouts;
     std::filesystem::path file;
+    std::filesystem::path layoutFile;
     std::unique_ptr<qs::Transaction> undo;
     std::thread worker;
     bool busy = false, managing = false;
@@ -252,6 +359,7 @@ struct App {
     void menu() {
         auto menu = CreatePopupMenu();
         const bool blocked = busy || managing;
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Display settings");
         if (presets.empty()) AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No presets — choose Manage presets");
         for (size_t i = 0; i < presets.size(); ++i) {
             auto label = presets[i].name;
@@ -260,8 +368,17 @@ struct App {
             AppendMenuW(menu, MF_STRING | (blocked ? MF_GRAYED : 0), PresetBase + i, label.c_str());
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Monitor layouts");
+        if (layouts.empty()) AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No layouts — choose Manage monitor layouts");
+        for (size_t i = 0; i < layouts.size(); ++i) {
+            auto label = layouts[i].name;
+            for (size_t p = 0; (p = label.find(L'&', p)) != std::wstring::npos; p += 2) label.insert(p, 1, L'&');
+            AppendMenuW(menu, MF_STRING | (blocked ? MF_GRAYED : 0), LayoutBase + i, label.c_str());
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING | (blocked || !undo ? MF_GRAYED : 0), Restore, L"Restore previous settings");
         AppendMenuW(menu, MF_STRING | (blocked ? MF_GRAYED : 0), Manage, L"Manage presets…");
+        AppendMenuW(menu, MF_STRING | (blocked ? MF_GRAYED : 0), ManageLayouts, L"Manage monitor layouts…");
         AppendMenuW(menu, MF_STRING | (blocked ? MF_GRAYED : 0), Diagnose, L"Read-only diagnostics…");
         AppendMenuW(menu, MF_STRING | (startupEnabled() ? MF_CHECKED : 0) | (blocked ? MF_GRAYED : 0), Startup, L"Start with Windows");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -271,15 +388,17 @@ struct App {
         DestroyMenu(menu); PostMessageW(window, WM_NULL, 0, 0);
         if (command) PostMessageW(window, WM_COMMAND, command, 0);
     }
-    void apply(size_t index) {
-        if (busy || managing || index >= presets.size()) return;
-        auto p = presets[index]; busy = true; tooltip(L"Nvidia Quick Switch — applying…");
+    template<class P> void applyPreset(P p) {
+        if (busy || managing) return;
+        busy = true; tooltip(L"Nvidia Quick Switch — applying…");
         worker = std::thread([this, p] {
             auto r = std::make_unique<Result>(); r->transaction = std::make_unique<qs::Transaction>(); r->label = p.name;
             try { r->transaction->apply(p); } catch (const std::exception& e) { r->error = e.what(); }
             PostMessageW(window, WorkDone, 0, reinterpret_cast<LPARAM>(r.release()));
         });
     }
+    void apply(size_t index) { if (index < presets.size()) applyPreset(presets[index]); }
+    void applyLayout(size_t index) { if (index < layouts.size()) applyPreset(layouts[index]); }
     void restore() {
         if (!undo || worker.joinable()) return;
         if (confirm) { DestroyWindow(confirm); confirm = nullptr; }
@@ -347,10 +466,17 @@ LRESULT CALLBACK windowProc(HWND window, UINT msg, WPARAM w, LPARAM l) {
         if (msg == WM_COMMAND && !a->busy && !a->managing) {
             auto command = LOWORD(w);
             if (command >= PresetBase && command < PresetBase + a->presets.size()) { a->apply(command - PresetBase); return 0; }
+            if (command >= LayoutBase && command < LayoutBase + a->layouts.size()) { a->applyLayout(command - LayoutBase); return 0; }
             if (command == Restore) { a->restore(); return 0; }
             if (command == Manage) {
                 a->managing = true;
-                Manager manager{&a->presets, a->file};
+                Manager manager{&a->presets, nullptr, a->file};
+                DialogBoxParamW(instance, MAKEINTRESOURCEW(IDD_MANAGER), window, managerProc, reinterpret_cast<LPARAM>(&manager));
+                a->managing = false; return 0;
+            }
+            if (command == ManageLayouts) {
+                a->managing = true;
+                Manager manager{nullptr, &a->layouts, a->layoutFile};
                 DialogBoxParamW(instance, MAKEINTRESOURCEW(IDD_MANAGER), window, managerProc, reinterpret_cast<LPARAM>(&manager));
                 a->managing = false; return 0;
             }
@@ -374,7 +500,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT msg, WPARAM w, LPARAM l) {
 }
 int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int) {
     instance = h;
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES}; InitCommonControlsEx(&controls);
+    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
     HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\NvidiaQuickSwitch.Tray.v1");
     if (!mutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -384,6 +510,7 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int) {
     int exitCode = 0;
     try {
         App app; app.file = qs::configPath(); app.presets = qs::loadPresets(app.file);
+        app.layoutFile = qs::layoutConfigPath(); app.layouts = qs::loadLayouts(app.layoutFile);
         WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = h; cls.lpfnWndProc = windowProc;
         cls.lpszClassName = L"NvidiaQuickSwitch.Tray"; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH));

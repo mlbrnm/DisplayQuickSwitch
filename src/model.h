@@ -19,7 +19,14 @@ struct Preset {
     Vsync vsync = Vsync::unchanged;
     int maxFps = -1; // -1 untouched, 0 disabled.
 };
+struct MonitorState { std::wstring monitor; bool enabled = true; };
+struct LayoutPreset {
+    std::wstring name;
+    std::wstring primaryMonitor;
+    std::vector<MonitorState> monitors;
+};
 void validate(const Preset& p);
+void validate(const LayoutPreset& p);
 uint32_t parseUnsigned(const std::wstring& text, uint32_t max);
 uint32_t parseRefresh(const std::wstring& text);
 std::wstring formatRefresh(uint32_t milliHz);

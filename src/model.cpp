@@ -4,6 +4,21 @@
 #include <limits>
 
 namespace qs {
+void validate(const LayoutPreset& p) {
+    if (trim(p.name).empty() || p.name.size() > 100 || p.name.find_first_of(L"\r\n\t") != std::wstring::npos)
+        throw std::runtime_error("Layout name must be 1-100 characters without line breaks or tabs.");
+    if (p.monitors.empty() || p.monitors.size() > 64) throw std::runtime_error("A layout must list 1-64 monitors.");
+    bool primaryEnabled = false;
+    for (size_t i = 0; i < p.monitors.size(); ++i) {
+        const auto& m = p.monitors[i];
+        if (m.monitor.empty() || m.monitor.size() > 1024 || m.monitor.find_first_of(L"\r\n") != std::wstring::npos)
+            throw std::runtime_error("Invalid monitor identity in layout.");
+        for (size_t j = 0; j < i; ++j) if (_wcsicmp(m.monitor.c_str(), p.monitors[j].monitor.c_str()) == 0)
+            throw std::runtime_error("A monitor must appear only once in a layout.");
+        if (m.enabled && _wcsicmp(m.monitor.c_str(), p.primaryMonitor.c_str()) == 0) primaryEnabled = true;
+    }
+    if (!primaryEnabled) throw std::runtime_error("Choose a primary monitor that is enabled. At least one monitor must remain enabled.");
+}
 std::wstring trim(const std::wstring& s) {
     const auto a = s.find_first_not_of(L" \t\r\n");
     if (a == std::wstring::npos) return {};

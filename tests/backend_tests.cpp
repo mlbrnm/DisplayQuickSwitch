@@ -2,6 +2,7 @@
 // Tests cannot touch a real display or driver profile.
 #include "backend.h"
 #include "windows_scaling.h"
+#include "monitor_layout.h"
 #include <windows.h>
 #include <nvapi.h>
 #include <NvApiDriverSettings.h>
@@ -44,6 +45,13 @@ void reset() {
 Session* session(NvDRSSessionHandle h) { return reinterpret_cast<Session*>(h); }
 }
 namespace qs {
+// This suite exercises NVAPI/DRS/DPI only. Layouts have a dedicated fake-CCD suite.
+struct MonitorLayoutTransaction::Impl {};
+MonitorLayoutTransaction::MonitorLayoutTransaction() : impl(std::make_unique<Impl>()) {}
+MonitorLayoutTransaction::~MonitorLayoutTransaction() = default;
+void MonitorLayoutTransaction::apply(const LayoutPreset&) { throw std::runtime_error("Use the dedicated fake-CCD layout test suite."); }
+void MonitorLayoutTransaction::restore() {}
+bool MonitorLayoutTransaction::needsRestore() const { return false; }
 std::vector<Monitor> testMonitors() { return {{L"lcd", L"LCD", L"DISPLAY1", true}, {L"crt", L"CRT", L"DISPLAY2", false}}; }
 uint32_t testDisplayId(const Monitor& m) { return m.key == L"lcd" ? 1 : 2; }
 WindowsScaleInfo windowsScale(const std::wstring& key) {
@@ -218,6 +226,13 @@ int main() {
         expect(qs::capture(qs::testMonitors()[1]).windowsScalePercent == 100, "capture includes Windows scaling");
         fake::scalingUnavailable = true;
         expect(qs::capture(qs::testMonitors()[1]).windowsScalePercent == 0, "capture gracefully leaves unsupported Windows scaling unchanged");
+        fake::reset();
+        qs::Transaction reused;
+        qs::LayoutPreset fakeLayout{L"Fake layout", L"crt", {{L"crt", true}}};
+        rejects([&] { reused.apply(fakeLayout); }, "fake layout seam fails safely");
+        reused.apply(crtPreset()); reused.restore();
+        originalDisplay("display-settings undo is not routed to an old failed layout object");
+        expect(fake::overrides.empty(), "reused transaction restores driver policy normally");
     } catch (const std::exception& e) { std::cerr << "Unexpected: " << e.what() << '\n'; ++failures; }
     if (!failures) std::cout << "All backend transaction tests passed using fake NVAPI. No real display or driver writes.\n";
     return failures ? 1 : 0;

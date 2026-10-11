@@ -20,9 +20,21 @@ I created this tool because I found keeping track of all the settings while swit
 
 Starting the application, creating/editing presets, and opening diagnostics **do not apply settings**. Capture is read-only. Nothing is automatically applied on startup.
 
+### Monitor layout presets
+
+The tray has two independent preset lists, separated by a divider:
+
+- **Display settings**: the existing presets change a target display's mode/settings and optionally make it primary. They do not enable or disable monitors.
+- **Monitor layouts**: choose which connected monitors are enabled and which enabled monitor is primary. They do not edit NVIDIA profile or Windows DPI settings.
+
+Choose **Manage monitor layouts… → New…**, check the monitors to enable, select the primary monitor, and save. The editor includes connected displays that are currently disabled. **Capture current layout** copies the current enabled/primary state. Layouts use the same 20-second Keep/Revert confirmation and **Restore previous settings** action; the shared undo remembers the last successful switch of either kind.
+
+For example, create `TV only`, `CRT only`, and `Both — TV primary` layouts, then apply a display-settings preset after selecting a layout. At least one monitor must be enabled, and the primary must be enabled. An enabled monitor that is disconnected causes the entire switch to fail before applying changes; an absent monitor marked disabled is harmless. New monitors not recorded in an older layout keep their current enabled state—edit/save the layout to include them explicitly.
+
 ### Included settings
 
-- Primary monitor selection. Other active monitors remain enabled; their desktop positions are translated so the new primary is at `(0, 0)`.
+- Optional primary-monitor selection in display-settings presets. Other active monitors remain enabled; their desktop positions are translated so the new primary is at `(0, 0)`.
+- Separate monitor layout presets for enabling/disabling connected monitors and choosing the primary.
 - Resolution and refresh rate, with refresh values stored in millihertz (`59.94`, `119.88`, etc.).
 - GPU scaling: no scaling, aspect ratio, full-screen/stretch, integer scaling.
 - Per-monitor **Windows scaling** (text/apps/UI): leave unchanged, or a standard percentage from 100% to 500%, subject to the monitor's supported range. This is separate from GPU scaling.
@@ -41,6 +53,7 @@ Presets and bounded error logs are stored in:
 
 ```text
 %LOCALAPPDATA%\NvidiaQuickSwitch\presets.ini
+%LOCALAPPDATA%\NvidiaQuickSwitch\layouts.ini
 %LOCALAPPDATA%\NvidiaQuickSwitch\errors.log
 ```
 
@@ -53,7 +66,8 @@ Windows DPI range handling follows [SetDPI](https://github.com/imniko/SetDPI): a
 ## Important limitations and safety
 
 - Windows does not expose a documented public setter for the normal per-monitor scale selector. This feature uses the undocumented CCD DPI packets, validates their reported range, and fails rather than silently selecting a different percentage. Windows updates could change this interface. **Global custom scaling is not supported**: disable it in Windows Settings, or leave Windows scaling unchanged in presets. There are no DPI registry writes, forced sign-outs, or changes to other monitors' scale settings. Some older applications may need a restart to redraw correctly.
-- Target monitors must already be active in Windows. This version does not enable disabled/disconnected monitors, disable other displays, create custom timings, or support clone/Surround layouts. All active display paths must be NVIDIA-driven; mixed-GPU configurations are rejected rather than incompletely restored.
+- Display-settings presets require an active target; use a monitor layout first to enable a connected but disabled display. Disconnected monitors cannot be enabled. Custom timings and clone/Surround layouts are not supported. Display-settings presets require all active paths to be NVIDIA-driven; monitor layouts use Windows' CCD API independently of NVAPI.
+- Monitor layouts preserve the modes and relative positions of displays that remain enabled, translating positions around the new primary. Windows restores saved modes/topology for re-enabled displays when available, otherwise chooses a workable mode; newly enabled displays are placed to avoid overlap. A layout does not specify resolution/refresh for an inactive screen—apply a display-settings preset afterward if needed. No DRS or DPI settings are written, although Windows/driver reactivation may restore monitor-specific state as part of a modeset. The previous enabled set, modes, and positions are retained for best-effort rollback.
 - G-SYNC changes **global driver policy**, not every monitor-specific Control Panel checkbox. Saved-policy readback is **not proof that VRR is actually running**. A CRT remains fixed-refresh. Use NVIDIA's G-SYNC indicator and the monitor's own refresh indicator to check your LCD.
 - Apply presets **before launching games**. Global changes can be overridden by existing per-game NVIDIA profiles, and running games may need a restart to pick up driver policy. This app deliberately does not rewrite game profiles.
 - The driver validates display configurations before any persistent changes. Requested driver edits are staged before applying the display topology. Unsupported settings abort the operation; they are not silently skipped.

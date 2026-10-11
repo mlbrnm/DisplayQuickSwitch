@@ -10,7 +10,9 @@ std::filesystem::path configPath() {
     if (!n || n >= 32768) throw std::runtime_error("LOCALAPPDATA is unavailable.");
     return std::filesystem::path(value) / L"NvidiaQuickSwitch" / L"presets.ini";
 }
-std::vector<Preset> loadPresets(const std::filesystem::path& file) {
+std::filesystem::path layoutConfigPath() { return configPath().parent_path() / L"layouts.ini"; }
+namespace {
+std::vector<std::map<std::wstring, std::wstring>> readSections(const std::filesystem::path& file, const std::wstring& section) {
     if (!std::filesystem::exists(file)) return {};
     if (std::filesystem::file_size(file) > 1024 * 1024) throw std::runtime_error("Preset file is too large.");
     std::ifstream input(file, std::ios::binary);
@@ -28,7 +30,7 @@ std::vector<Preset> loadPresets(const std::filesystem::path& file) {
         start = end == std::wstring::npos ? text.size() : end + 1;
         if (line.empty() || line.front() == L';') continue;
         if (line.front() == L'[' && line.back() == L']') {
-            if (line != L"[Preset]") throw std::runtime_error("Unknown section in preset file.");
+            if (line != section) throw std::runtime_error("Unknown section in preset file.");
             sections.emplace_back();
             if (sections.size() > 100) throw std::runtime_error("At most 100 presets are supported.");
         } else {
@@ -38,6 +40,28 @@ std::vector<Preset> loadPresets(const std::filesystem::path& file) {
                 throw std::runtime_error("Duplicate field in preset file.");
         }
     }
+    return sections;
+}
+void writeConfig(const std::filesystem::path& file, const std::wstring& text) {
+    std::filesystem::create_directories(file.parent_path());
+    auto temp = file; temp += L".tmp";
+    HANDLE h = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot write presets.");
+    DWORD written = 0;
+    const wchar_t bom = 0xfeff;
+    const auto size = static_cast<DWORD>(text.size() * sizeof(wchar_t));
+    bool ok = WriteFile(h, &bom, 2, &written, nullptr) && written == 2;
+    ok = ok && WriteFile(h, text.data(), size, &written, nullptr) && written == size;
+    ok = ok && FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!ok || !MoveFileExW(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(temp.c_str());
+        throw std::runtime_error("Cannot save presets atomically. The original file was left intact.");
+    }
+}
+}
+std::vector<Preset> loadPresets(const std::filesystem::path& file) {
+    auto sections = readSections(file, L"[Preset]");
     std::vector<Preset> out;
     for (auto& s : sections) {
         const std::vector<std::wstring> keys = {L"Name", L"Monitor", L"Primary", L"Width", L"Height", L"RefreshMilliHz", L"Scaling", L"Gsync", L"Vsync", L"MaxFps"};
@@ -74,20 +98,37 @@ void savePresets(const std::filesystem::path& file, const std::vector<Preset>& p
         field(L"Gsync", static_cast<int>(p.gsync)); field(L"Vsync", static_cast<int>(p.vsync)); field(L"MaxFps", p.maxFps);
         text += L"\r\n";
     }
-    std::filesystem::create_directories(file.parent_path());
-    auto temp = file; temp += L".tmp";
-    HANDLE h = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot write presets.");
-    DWORD written = 0;
-    const wchar_t bom = 0xfeff;
-    const auto size = static_cast<DWORD>(text.size() * sizeof(wchar_t));
-    bool ok = WriteFile(h, &bom, 2, &written, nullptr) && written == 2;
-    ok = ok && WriteFile(h, text.data(), size, &written, nullptr) && written == size;
-    ok = ok && FlushFileBuffers(h);
-    CloseHandle(h);
-    if (!ok || !MoveFileExW(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileW(temp.c_str());
-        throw std::runtime_error("Cannot save presets atomically. The original file was left intact.");
+    writeConfig(file, text);
+}
+std::vector<LayoutPreset> loadLayouts(const std::filesystem::path& file) {
+    auto sections = readSections(file, L"[Layout]");
+    std::vector<LayoutPreset> result;
+    for (auto& s : sections) {
+        if (!s.contains(L"Name") || !s.contains(L"Primary") || !s.contains(L"MonitorCount")) throw std::runtime_error("Missing layout fields.");
+        auto count = parseUnsigned(s.at(L"MonitorCount"), 64);
+        if (s.size() != 3 + count * 2) throw std::runtime_error("Missing or unknown layout fields.");
+        LayoutPreset p; p.name = s.at(L"Name"); p.primaryMonitor = s.at(L"Primary");
+        for (uint32_t i = 0; i < count; ++i) {
+            auto suffix = std::to_wstring(i), monitor = L"Monitor" + suffix, enabled = L"Enabled" + suffix;
+            if (!s.contains(monitor) || !s.contains(enabled)) throw std::runtime_error("Missing monitor entry in layout.");
+            p.monitors.push_back({s.at(monitor), parseUnsigned(s.at(enabled), 1) != 0});
+        }
+        validate(p); result.push_back(std::move(p));
     }
+    return result;
+}
+void saveLayouts(const std::filesystem::path& file, const std::vector<LayoutPreset>& presets) {
+    if (presets.size() > 100) throw std::runtime_error("At most 100 monitor layout presets are supported.");
+    std::wstring text = L"; Monitor layouts: enabled state and primary only. No display/driver settings.\r\n";
+    for (const auto& p : presets) {
+        validate(p);
+        text += L"\r\n[Layout]\r\nName=" + trim(p.name) + L"\r\nPrimary=" + p.primaryMonitor + L"\r\nMonitorCount=" + std::to_wstring(p.monitors.size());
+        for (size_t i = 0; i < p.monitors.size(); ++i) {
+            text += L"\r\nMonitor" + std::to_wstring(i) + L"=" + p.monitors[i].monitor;
+            text += L"\r\nEnabled" + std::to_wstring(i) + L"=" + (p.monitors[i].enabled ? L"1" : L"0");
+        }
+        text += L"\r\n";
+    }
+    writeConfig(file, text);
 }
 }
