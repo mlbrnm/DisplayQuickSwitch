@@ -4,10 +4,9 @@ A native **Windows x64 tray application** for manually switching display presets
 
 I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. I'm one of those crazy people who uses a 4K OLED TV as a monitor so I often like to play at alternate resolutions such as 3840x1600 or 3440x1440 ultrawide, and I also sometimes use a small CRT monitor that requires very different settings from a modern display.
 
-**Status: first working build, tested on an RTX 5000 series GPU / driver 617.42.** 
-
-<img height="200" alt="Screenshot 2026-10-10 210525" src="https://github.com/user-attachments/assets/2eb47b2e-1bab-4472-9e29-5395838bbcaf" />
-<img height="200" alt="quickswitch" src="https://github.com/user-attachments/assets/fd2da02f-3d4a-4e23-8aa9-973f43d3e083" />
+<div align="center">
+  <img width="767" height="532" alt="Screenshot 2026-10-11 124506" src="https://github.com/user-attachments/assets/662a4379-8748-4329-a29b-211b8bc2dc0c" />
+</div>
 
 ## Run
 
@@ -29,12 +28,12 @@ The tray has two independent preset lists, separated by a divider:
 
 Choose **Manage monitor layouts… → New…**, check the monitors to enable, select the primary monitor, and save. The editor includes connected displays that are currently disabled. **Capture current layout** copies the current enabled/primary state. Layouts use the same 20-second Keep/Revert confirmation and **Restore previous settings** action; the shared undo remembers the last successful switch of either kind.
 
-For example, create `TV only`, `CRT only`, and `Both — TV primary` layouts, then apply a display-settings preset after selecting a layout. At least one monitor must be enabled, and the primary must be enabled. An enabled monitor that is disconnected causes the entire switch to fail before applying changes; an absent monitor marked disabled is harmless. New monitors not recorded in an older layout keep their current enabled state—edit/save the layout to include them explicitly.
+For example, create `Monitor only`, `CRT only`, and `Both — Monitor primary` layouts, then apply a display-settings preset after selecting a layout. At least one monitor must be enabled, and the primary must be enabled. An enabled monitor that is disconnected causes the entire switch to fail before applying changes; an absent monitor marked disabled is harmless. New monitors not recorded in an older layout keep their current enabled state—edit/save the layout to include them explicitly.
 
 ### Included settings
+<img width="1450" height="962" alt="Screenshot 2026-10-10 211258" src="https://github.com/user-attachments/assets/fefc4c57-a2bc-4e45-ac19-966bbba70c59" />
 
 - Optional primary-monitor selection in display-settings presets. Other active monitors remain enabled; their desktop positions are translated so the new primary is at `(0, 0)`.
-- Separate monitor layout presets for enabling/disabling connected monitors and choosing the primary.
 - Resolution and refresh rate, with refresh values stored in millihertz (`59.94`, `119.88`, etc.).
 - GPU scaling: no scaling, aspect ratio, full-screen/stretch, integer scaling.
 - Per-monitor **Windows scaling** (text/apps/UI): leave unchanged, or a standard percentage from 100% to 500%, subject to the monitor's supported range. This is separate from GPU scaling.
@@ -42,10 +41,10 @@ For example, create `TV only`, `CRT only`, and `Both — TV primary` layouts, th
 - Global V-SYNC: application-controlled, off, on. Both the Direct3D setting and OpenGL default swap-interval policy are updated.
 - Global NVIDIA frame limiter: disabled or a cap up to the public SDK's limit of 1023 FPS.
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
+- Separate monitor layout presets for enabling/disabling connected monitors and choosing the primary.
+<img width="1475" height="737" alt="Screenshot 2026-10-11 124102" src="https://github.com/user-attachments/assets/f75471eb-74f5-44ab-9f30-8e5a20d7e7a8" />
+
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
-
-<img width="1450" height="962" alt="Screenshot 2026-10-10 211258" src="https://github.com/user-attachments/assets/fefc4c57-a2bc-4e45-ac19-966bbba70c59" />
-
 
 Blank resolution/refresh/FPS fields and **Leave unchanged** options do not override those settings. FPS `0` explicitly disables the limiter. Resolution must have both dimensions supplied, or both blank.
 
@@ -57,9 +56,7 @@ Presets and bounded error logs are stored in:
 %LOCALAPPDATA%\NvidiaQuickSwitch\errors.log
 ```
 
-The editor saves presets atomically as UTF-16 LE. Monitor matching uses the Windows monitor device interface path, **not** a transient `DISPLAY1` number. Moving a monitor to another port/adapter can change that identity; edit and reselect it if needed. There are no bundled presets that assume which screen is your CRT.
-
-Existing presets remain compatible: a missing `WindowsScalePercent` field means **leave Windows scaling unchanged**. Saving with the new editor adds the field. Capture includes the selected monitor's Windows scale when available; if Windows cannot report it, that field stays unchanged. A scale requested by a preset is applied after the display mode/primary-monitor change, verified, and included in timeout/manual restoration.
+The editor saves presets atomically as UTF-16 LE. Monitor matching uses the Windows monitor device interface path, **not** a transient `DISPLAY1` number. Moving a monitor to another port/adapter can change that identity; edit and reselect it if needed.
 
 Windows DPI range handling follows [SetDPI](https://github.com/imniko/SetDPI): a reported current offset outside the supported range is clamped when decoding it, and the maximum can be below the recommended scale. This avoids rejecting valid percentages merely because an offset is stale or the recommendation exceeds the current maximum. **Requested preset percentages are never silently clamped** to a different value. If a switch still fails, copy the affected monitor's `DPI CCD` line from **Read-only diagnostics** and the new error text; these include the raw offsets needed to identify an unrecognized range or a Windows API failure.
 
