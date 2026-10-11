@@ -41,7 +41,9 @@ std::vector<Preset> loadPresets(const std::filesystem::path& file) {
     std::vector<Preset> out;
     for (auto& s : sections) {
         const std::vector<std::wstring> keys = {L"Name", L"Monitor", L"Primary", L"Width", L"Height", L"RefreshMilliHz", L"Scaling", L"Gsync", L"Vsync", L"MaxFps"};
-        if (s.size() != keys.size()) throw std::runtime_error("Missing or unknown preset fields.");
+        // The new field is optional when reading v1 files; existing presets stay unchanged.
+        const auto expected = keys.size() + (s.contains(L"WindowsScalePercent") ? 1 : 0);
+        if (s.size() != expected) throw std::runtime_error("Missing or unknown preset fields.");
         for (const auto& key : keys) if (!s.contains(key)) throw std::runtime_error("Missing preset field.");
         auto number = [&](const wchar_t* key, uint32_t max) { return parseUnsigned(s.at(key), max); };
         auto optional = [&](const wchar_t* key, uint32_t max) { return s.at(key) == L"-1" ? -1 : static_cast<int>(number(key, max)); };
@@ -51,6 +53,7 @@ std::vector<Preset> loadPresets(const std::filesystem::path& file) {
         p.width = number(L"Width", 32768); p.height = number(L"Height", 32768);
         p.refreshMilliHz = number(L"RefreshMilliHz", 1000000);
         p.scaling = static_cast<Scaling>(number(L"Scaling", 8));
+        if (s.contains(L"WindowsScalePercent")) p.windowsScalePercent = number(L"WindowsScalePercent", 500);
         p.gsync = static_cast<Gsync>(optional(L"Gsync", 2));
         p.vsync = static_cast<Vsync>(optional(L"Vsync", 2));
         p.maxFps = optional(L"MaxFps", 1023);
@@ -60,13 +63,14 @@ std::vector<Preset> loadPresets(const std::filesystem::path& file) {
 }
 void savePresets(const std::filesystem::path& file, const std::vector<Preset>& presets) {
     if (presets.size() > 100) throw std::runtime_error("At most 100 presets are supported.");
-    std::wstring text = L"; Nvidia Quick Switch v1. Settings are global. -1 means unchanged.\r\n";
+    std::wstring text = L"; Nvidia Quick Switch v2. Driver settings are global. WindowsScalePercent=0 means unchanged.\r\n";
     for (const auto& p : presets) {
         validate(p);
         text += L"\r\n[Preset]\r\nName=" + trim(p.name) + L"\r\nMonitor=" + p.monitor;
         auto field = [&](const wchar_t* k, int64_t v) { text += L"\r\n" + std::wstring(k) + L"=" + std::to_wstring(v); };
         field(L"Primary", p.primary); field(L"Width", p.width); field(L"Height", p.height);
         field(L"RefreshMilliHz", p.refreshMilliHz); field(L"Scaling", static_cast<int>(p.scaling));
+        field(L"WindowsScalePercent", p.windowsScalePercent);
         field(L"Gsync", static_cast<int>(p.gsync)); field(L"Vsync", static_cast<int>(p.vsync)); field(L"MaxFps", p.maxFps);
         text += L"\r\n";
     }

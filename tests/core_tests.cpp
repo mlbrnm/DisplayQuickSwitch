@@ -1,5 +1,6 @@
 #include "model.h"
 #include "config.h"
+#include "windows_scaling.h"
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -24,14 +25,25 @@ int main() {
     expect(positions[0].x == 0 && positions[1].x == 3840 && positions[2].x == 5760 && positions[2].y == -200, "primary translation preserves layout");
     rejects([] { rebasePositions({{INT32_MIN, 0}, {INT32_MAX, 0}}, 0); }, "layout overflow");
     rejects([] { rebasePositions({}, 0); }, "missing primary");
+    const auto scale = decodeWindowsScale(-4, -2, 3);
+    expect(scale.current == 150 && scale.recommended == 200 && scale.maximum == 300, "decode Windows relative DPI steps");
+    expect(relativeWindowsScale(scale, 125) == -3 && relativeWindowsScale(scale, 300) == 3, "absolute to relative DPI steps");
+    rejects([&] { relativeWindowsScale(scale, 350); }, "unsupported per-monitor scaling maximum");
+    rejects([&] { relativeWindowsScale(scale, 110); }, "custom DPI percentage");
+    rejects([] { decodeWindowsScale(INT32_MIN, 0, INT32_MAX); }, "DPI range overflow");
+    rejects([] { decodeWindowsScale(1, 0, 3); }, "positive minimum DPI offset");
+    rejects([] { decodeWindowsScale(-2, -3, 3); }, "DPI below 100 percent");
+    rejects([] { decodeWindowsScale(-2, 4, 3); }, "DPI above supported maximum");
     Preset p; p.name = L"4K 日本語 = test"; p.monitor = L"\\\\?\\DISPLAY#ABC#123";
     p.width = 3840; p.height = 2160; p.refreshMilliHz = 119880;
     p.scaling = Scaling::integer; p.gsync = Gsync::windowed; p.vsync = Vsync::on; p.maxFps = 117;
+    p.windowsScalePercent = 150;
     validate(p);
     auto invalid = p; invalid.height = 0; rejects([&] { validate(invalid); }, "partial resolution");
     invalid = p; invalid.scaling = static_cast<Scaling>(4); rejects([&] { validate(invalid); }, "invalid scaling");
     invalid = p; invalid.name = L"bad\nname"; rejects([&] { validate(invalid); }, "INI injection");
     invalid = p; invalid.maxFps = 1024; rejects([&] { validate(invalid); }, "FPS bounds");
+    auto invalidScale = p; invalidScale.windowsScalePercent = 110; rejects([&] { validate(invalidScale); }, "Windows scale validation");
     wchar_t temp[32768]{}; GetTempPathW(32768, temp);
     auto directory = std::filesystem::path(temp) / (L"NvidiaQuickSwitch-tests-" + std::to_wstring(GetCurrentProcessId()));
     auto file = directory / L"presets.ini";
@@ -39,11 +51,24 @@ int main() {
         expect(loadPresets(file).empty(), "missing file");
         auto unchanged = p; unchanged.name = L"Untouched"; unchanged.width = unchanged.height = unchanged.refreshMilliHz = 0;
         unchanged.scaling = Scaling::unchanged; unchanged.gsync = Gsync::unchanged; unchanged.vsync = Vsync::unchanged; unchanged.maxFps = -1; unchanged.primary = false;
+        unchanged.windowsScalePercent = 0;
         savePresets(file, {p, unchanged});
         auto loaded = loadPresets(file);
         expect(loaded.size() == 2 && loaded[0].name == p.name && loaded[0].monitor == p.monitor &&
-               loaded[0].refreshMilliHz == 119880 && loaded[0].scaling == Scaling::integer && loaded[0].maxFps == 117, "Unicode round-trip");
+               loaded[0].refreshMilliHz == 119880 && loaded[0].scaling == Scaling::integer && loaded[0].maxFps == 117 && loaded[0].windowsScalePercent == 150, "Unicode and Windows scaling round-trip");
         expect(loaded[1].maxFps == -1 && loaded[1].gsync == Gsync::unchanged && !loaded[1].primary, "unchanged round-trip");
+        // Strip the optional field to emulate a file written by the original release.
+        savePresets(file, {p});
+        {
+            std::ifstream in(file, std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(in)), {}); in.close();
+            std::string field;
+            for (wchar_t c : std::wstring(L"WindowsScalePercent=150\r\n")) { field += static_cast<char>(c); field += '\0'; }
+            bytes.erase(bytes.find(field), field.size());
+            std::ofstream out(file, std::ios::binary); out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        auto legacy = loadPresets(file);
+        expect(legacy.size() == 1 && legacy[0].windowsScalePercent == 0 && legacy[0].refreshMilliHz == 119880, "v1 presets remain compatible and do not override Windows scaling");
         savePresets(file, {unchanged}); expect(loadPresets(file).size() == 1, "atomic replacement has no stale sections");
         rejects([&] { savePresets(file, {invalid}); }, "invalid save");
         expect(loadPresets(file).size() == 1, "invalid save preserves existing file");

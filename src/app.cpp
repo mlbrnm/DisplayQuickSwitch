@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "config.h"
 #include "resource.h"
+#include "windows_scaling.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <commctrl.h>
@@ -42,6 +43,9 @@ std::wstring text(HWND dialog, int id) {
 }
 void setText(HWND d, int id, const std::wstring& value) { SetDlgItemTextW(d, id, value.c_str()); }
 void centerPrimary(HWND window) {
+    SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(LoadIconW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH))));
+    SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED)));
     RECT work{}, rect{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0); GetWindowRect(window, &rect);
     SetWindowPos(window, HWND_TOP, work.left + ((work.right - work.left) - (rect.right - rect.left)) / 2,
@@ -70,6 +74,17 @@ void showFields(HWND d, const qs::Preset& p) {
     setText(d, IDC_FPS, p.maxFps >= 0 ? std::to_wstring(p.maxFps) : L"");
     fillCombo(d, IDC_SCALING, {{L"Leave unchanged", 0}, {L"No scaling (GPU)", 3}, {L"Aspect ratio (GPU)", 5},
                              {L"Full-screen / stretch (GPU)", 2}, {L"Integer scaling (GPU)", 8}}, static_cast<int>(p.scaling));
+    auto scaleControl = GetDlgItem(d, IDC_WINDOWS_SCALE);
+    SendMessageW(scaleControl, CB_RESETCONTENT, 0, 0);
+    SendMessageW(scaleControl, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Leave unchanged"));
+    SendMessageW(scaleControl, CB_SETITEMDATA, 0, 0);
+    SendMessageW(scaleControl, CB_SETCURSEL, 0, 0);
+    for (auto percent : qs::WindowsScaleSteps) {
+        auto label = std::to_wstring(percent) + L"%";
+        auto index = SendMessageW(scaleControl, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        SendMessageW(scaleControl, CB_SETITEMDATA, index, percent);
+        if (percent == p.windowsScalePercent) SendMessageW(scaleControl, CB_SETCURSEL, index, 0);
+    }
     fillCombo(d, IDC_GSYNC, {{L"Leave unchanged", -1}, {L"Off", 0}, {L"On — full-screen only", 1},
                            {L"On — full-screen and windowed", 2}}, static_cast<int>(p.gsync));
     fillCombo(d, IDC_VSYNC, {{L"Leave unchanged", -1}, {L"Application controlled", 0}, {L"Off", 1}, {L"On", 2}}, static_cast<int>(p.vsync));
@@ -113,6 +128,7 @@ INT_PTR CALLBACK editorProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
                 p.height = height.empty() ? 0 : qs::parseUnsigned(height, 32768);
                 p.refreshMilliHz = qs::parseRefresh(text(d, IDC_REFRESH));
                 p.scaling = static_cast<qs::Scaling>(comboValue(d, IDC_SCALING));
+                p.windowsScalePercent = static_cast<uint32_t>(comboValue(d, IDC_WINDOWS_SCALE));
                 p.gsync = static_cast<qs::Gsync>(comboValue(d, IDC_GSYNC));
                 p.vsync = static_cast<qs::Vsync>(comboValue(d, IDC_VSYNC));
                 p.maxFps = fps.empty() ? -1 : static_cast<int>(qs::parseUnsigned(fps, 1023));
@@ -227,7 +243,8 @@ struct App {
     void addIcon() {
         icon = {}; icon.cbSize = sizeof(icon); icon.hWnd = window; icon.uID = 1;
         icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; icon.uCallbackMessage = TrayMessage;
-        icon.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+        icon.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
         wcscpy_s(icon.szTip, L"Nvidia Quick Switch");
         if (!Shell_NotifyIconW(NIM_ADD, &icon)) throw std::runtime_error("Cannot add the tray icon.");
         icon.uVersion = NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION, &icon);
@@ -369,6 +386,9 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int) {
         App app; app.file = qs::configPath(); app.presets = qs::loadPresets(app.file);
         WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = h; cls.lpfnWndProc = windowProc;
         cls.lpszClassName = L"NvidiaQuickSwitch.Tray"; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH));
+        cls.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
         if (!RegisterClassExW(&cls)) throw std::runtime_error("Cannot register the tray window.");
         // Hidden top-level window, not a message-only window: receives Explorer restart broadcasts.
         auto window = CreateWindowExW(0, cls.lpszClassName, L"Nvidia Quick Switch", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, h, &app);

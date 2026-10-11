@@ -1,4 +1,6 @@
 #include "model.h"
+#include "windows_scaling.h"
+#include <algorithm>
 #include <limits>
 
 namespace qs {
@@ -45,6 +47,8 @@ std::wstring formatRefresh(uint32_t n) {
     return s;
 }
 void validate(const Preset& p) {
+    if (p.windowsScalePercent && std::find(WindowsScaleSteps.begin(), WindowsScaleSteps.end(), p.windowsScalePercent) == WindowsScaleSteps.end())
+        throw std::runtime_error("Choose a standard Windows scaling percentage, or leave it unchanged.");
     if (trim(p.name).empty() || p.name.size() > 100 || p.name.find_first_of(L"\r\n\t") != std::wstring::npos)
         throw std::runtime_error("Preset name must be 1-100 characters without line breaks or tabs.");
     if (p.monitor.empty() || p.monitor.size() > 1024 || p.monitor.find_first_of(L"\r\n") != std::wstring::npos)

@@ -14,6 +14,7 @@ struct Preset {
     bool primary = true;
     uint32_t width = 0, height = 0, refreshMilliHz = 0;
     Scaling scaling = Scaling::unchanged;
+    uint32_t windowsScalePercent = 0; // Windows UI/text scaling on the target monitor; 0 untouched.
     Gsync gsync = Gsync::unchanged;
     Vsync vsync = Vsync::unchanged;
     int maxFps = -1; // -1 untouched, 0 disabled.

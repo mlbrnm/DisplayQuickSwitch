@@ -20,12 +20,14 @@ Starting the application, creating/editing presets, and opening diagnostics **do
 - Primary monitor selection. Other active monitors remain enabled; their desktop positions are translated so the new primary is at `(0, 0)`.
 - Resolution and refresh rate, with refresh values stored in millihertz (`59.94`, `119.88`, etc.).
 - GPU scaling: no scaling, aspect ratio, full-screen/stretch, integer scaling.
+- Per-monitor **Windows scaling** (text/apps/UI): leave unchanged, or a standard percentage from 100% to 500%, subject to the monitor's supported range. This is separate from GPU scaling.
 - Global G-SYNC policy: off, full-screen only, full-screen + windowed.
 - Global V-SYNC: application-controlled, off, on. Both the Direct3D setting and OpenGL default swap-interval policy are updated.
 - Global NVIDIA frame limiter: disabled or a cap up to the public SDK's limit of 1023 FPS.
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
 - Read-only diagnostics with GPU, driver, monitor identities, current modes, and selected global policy values.
+- Original NVIDIA-green cat-in-a-cog icon, with a settings-slider face, embedded in the tray, executable, and dialogs. Multiple sizes keep it sharp at different Windows scale factors.
 
 Blank resolution/refresh/FPS fields and **Leave unchanged** options do not override those settings. FPS `0` explicitly disables the limiter. Resolution must have both dimensions supplied, or both blank.
 
@@ -38,15 +40,18 @@ Presets and bounded error logs are stored in:
 
 The editor saves presets atomically as UTF-16 LE. Monitor matching uses the Windows monitor device interface path, **not** a transient `DISPLAY1` number. Moving a monitor to another port/adapter can change that identity; edit and reselect it if needed. There are no bundled presets that assume which screen is your CRT.
 
+Existing presets remain compatible: a missing `WindowsScalePercent` field means **leave Windows scaling unchanged**. Saving with the new editor adds the field. Capture includes the selected monitor's Windows scale when available; if Windows cannot report it, that field stays unchanged. A scale requested by a preset is applied after the display mode/primary-monitor change, verified, and included in timeout/manual restoration.
+
 ## Important limitations and safety
 
+- Windows does not expose a documented public setter for the normal per-monitor scale selector. This feature uses the undocumented CCD DPI packets, validates their reported range, and fails rather than silently selecting a different percentage. Windows updates could change this interface. **Global custom scaling is not supported**: disable it in Windows Settings, or leave Windows scaling unchanged in presets. There are no DPI registry writes, forced sign-outs, or changes to other monitors' scale settings. Some older applications may need a restart to redraw correctly.
 - Target monitors must already be active in Windows. This version does not enable disabled/disconnected monitors, disable other displays, create custom timings, or support clone/Surround layouts. All active display paths must be NVIDIA-driven; mixed-GPU configurations are rejected rather than incompletely restored.
 - G-SYNC changes **global driver policy**, not every monitor-specific Control Panel checkbox. Saved-policy readback is **not proof that VRR is actually running**. A CRT remains fixed-refresh. Use NVIDIA's G-SYNC indicator and the monitor's own refresh indicator to check your LCD.
 - Apply presets **before launching games**. Global changes can be overridden by existing per-game NVIDIA profiles, and running games may need a restart to pick up driver policy. This app deliberately does not rewrite game profiles.
 - The driver validates display configurations before any persistent changes. Requested driver edits are staged before applying the display topology. Unsupported settings abort the operation; they are not silently skipped.
 - Resolution changes retain the relative positions of display origins; they do not automatically repack the desktop. An incompatible/overlapping arrangement may be rejected by the driver and require an initial adjustment in Windows display settings.
 - After applying, the app checks all active display identities, positions, resolutions, primary flags, scaling where requested, and the saved driver values. Refresh readback allows a **0.5 Hz** tolerance for driver timing differences. Fractional input is still sent to NVAPI without integer rounding.
-- On an apply/readback error, the app attempts restoration of **both** display and driver state. It restores only driver setting IDs changed by the preset, preserving prior user overrides vs defaults and leaving unrelated settings alone. Do not edit those same global settings in another utility during the transaction/undo period.
+- On an apply/readback error, the app attempts restoration of display, driver, and requested Windows scaling state independently. It restores only driver setting IDs changed by the preset, preserving prior user overrides vs defaults and leaving unrelated settings alone. Do not edit those same global settings or the target monitor's scale in another utility during the transaction/undo period.
 - **Rollback is best-effort, not crash protection.** The confirmation countdown works while the process/message loop is running. A hung driver call, killed/crashed process, shutdown, or disconnected monitor can prevent restoration. The snapshot is not persisted across restarts. If restoration fails, an error is shown and **Restore previous settings** can retry. Keep a known-good Windows display configuration and test conservatively, especially with CRT timings.
 - The app never requests a driver reload to force a mode through. Some writes may require elevated permissions on a particular installation; if NVAPI reports access denied, close the app and manually run it as administrator. There is no automatic elevation or always-on elevated helper.
 
@@ -78,6 +83,7 @@ For Visual Studio 2022, use `-G "Visual Studio 17 2022"` in a separate build dir
 
 - `qs_tests`: parsing, fractional refresh, layout rebasing and overflow, preset validation, Unicode serialization, atomic file replacement, invalid configuration rejection.
 - `qs_backend_tests`: staged validation, primary switching, global setting mappings, partial display/save failures, unexpected changes to another monitor, rollback of display and driver state, restoration failure/retry, unchanged settings, and preservation of unrelated settings. It links **fake NVAPI functions instead of NVIDIA's library**.
+- Windows scaling tests additionally cover relative/absolute percentage conversion, old-preset compatibility, per-monitor targeting, DPI capture, partial failures, readback mismatch, restoration/retry, and the no-op path. `qs_windows_scaling_tests` exercises the actual DPI packet implementation against **fake CCD/registry APIs**, including source-ID changes, unsupported ranges, cloning, and custom-scaling rejection.
 
 Neither test executable can apply real NVIDIA settings. `tests/tray_smoke.ps1` additionally launches the real tray, measures a fixed idle interval, checks that the NVAPI driver DLL is not loaded at startup, and closes its own instance gracefully. It never selects a preset. Run it only when the tray is not already running:
 
@@ -85,7 +91,17 @@ Neither test executable can apply real NVIDIA settings. `tests/tray_smoke.ps1` a
 & .\tests\tray_smoke.ps1
 ```
 
-Hardware acceptance, monitor-specific G-SYNC behavior, scaling persistence across mode changes, and interaction with the preset editor/confirmation UI still require testing on the target system.
+Hardware acceptance, monitor-specific G-SYNC behavior, scaling persistence across mode changes, and interaction with the preset editor/confirmation UI still require testing on the target system. For the new Windows scaling feature, first test a known-supported percentage on one monitor and verify timeout/manual restore before combining it with other mode changes.
+
+### Icon artwork
+
+The original icon assets are in `src/assets/`. To regenerate the multi-size ICO and PNG preview using Windows' built-in System.Drawing:
+
+```powershell
+& .\tools\generate-icon.ps1
+```
+
+The checked-in ICO is compiled directly into the executable; generation tools and image libraries are not needed at runtime.
 
 
 

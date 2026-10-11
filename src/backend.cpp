@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "windows_scaling.h"
 #include <windows.h>
 #include <nvapi.h>
 #include <NvApiDriverSettings.h>
@@ -115,6 +116,17 @@ Topology readSettled() {
         catch (...) { if (i == 9) throw; std::this_thread::sleep_for(std::chrono::milliseconds(200)); }
     }
 }
+void verifyWindowsScale(const std::wstring& key, uint32_t percent) {
+    for (int i = 0; ; ++i) {
+        try {
+            if (windowsScale(key).current == percent) return;
+            throw std::runtime_error("Windows scaling did not pass readback verification.");
+        } catch (...) {
+            if (i == 9) throw;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+}
 NvU32 displayId(const Monitor& m) {
 #ifdef QS_TEST_BACKEND
     return testDisplayId(m);
@@ -214,6 +226,8 @@ Preset capture(const Monitor& m) {
         if (s.u32CurrentValue == VSYNCMODE_FORCEON) p.vsync = Vsync::on;
     }
     if (drs.get(FRL_FPS_ID, s) && s.u32CurrentValue <= 1023) p.maxFps = static_cast<int>(s.u32CurrentValue);
+    // DPI support is optional; inability to capture it must not break existing presets.
+    try { p.windowsScalePercent = windowsScale(m.key).current; } catch (const std::exception&) {}
     return p;
 }
 struct Transaction::Impl {
@@ -221,19 +235,29 @@ struct Transaction::Impl {
     Topology before;
     std::vector<Setting> settings;
     bool displayDirty = false, driverDirty = false;
+    bool windowsScaleDirty = false;
+    std::wstring windowsScaleKey;
+    uint32_t previousWindowsScale = 0;
 };
 Transaction::Transaction() : impl(std::make_unique<Impl>()) {}
 Transaction::~Transaction() = default;
-bool Transaction::needsRestore() const { return impl->displayDirty || impl->driverDirty; }
+bool Transaction::needsRestore() const { return impl->displayDirty || impl->driverDirty || impl->windowsScaleDirty; }
 void Transaction::apply(const Preset& p) {
     validate(p);
-    if (impl->displayDirty || impl->driverDirty) throw std::runtime_error("Transaction already contains applied settings.");
+    if (needsRestore()) throw std::runtime_error("Transaction already contains applied settings.");
     Api api;
     auto monitor = resolve(p.monitor);
     const auto id = displayId(monitor);
     impl->before = Topology::read();
     auto target = impl->before;
     const auto selected = target.find(id);
+    if (p.windowsScalePercent) {
+        impl->windowsScaleKey = monitor.key;
+        const auto info = windowsScale(monitor.key); // Snapshot/fail before making ANY changes.
+        impl->previousWindowsScale = info.current;
+        // A resolution change can expand the supported range; check that range again after modeset.
+        if (!p.width) relativeWindowsScale(info, p.windowsScalePercent);
+    }
     if (p.primary) {
         std::vector<Position> positions;
         for (auto& s : target.sources) positions.push_back({s.position.x, s.position.y});
@@ -264,6 +288,7 @@ void Transaction::apply(const Preset& p) {
     try {
         // The order is intentional: establish the new primary/display mode, then global policy.
         impl->displayDirty = true; // A failing driver call can partially apply.
+        impl->windowsScaleDirty = p.windowsScalePercent != 0; // Modeset can itself alter DPI.
         target.write();
         if (!desired.empty()) { impl->driverDirty = true; drs.save(); }
         const auto actual = readSettled();
@@ -292,6 +317,10 @@ void Transaction::apply(const Preset& p) {
             if (!readback.get(key, current) || current.u32CurrentValue != value)
                 throw std::runtime_error("A global driver setting did not pass readback verification.");
         }
+        if (p.windowsScalePercent) {
+            setWindowsScale(impl->windowsScaleKey, p.windowsScalePercent);
+            verifyWindowsScale(impl->windowsScaleKey, p.windowsScalePercent);
+        }
     } catch (const std::exception& e) {
         auto message = std::string(e.what());
         try { restore(); message += "\nPrevious settings restored."; }
@@ -300,11 +329,11 @@ void Transaction::apply(const Preset& p) {
     }
 }
 void Transaction::restore() {
-    Api api;
     std::string errors;
-    // Try both even when the first fails. Never restore unrelated profile settings.
+    // Try all three even when one fails. DPI restoration must not depend on NVAPI initialization.
     if (impl->displayDirty) {
         try {
+            Api api;
             impl->before.write();
             auto actual = readSettled();
             for (size_t i = 0; i < impl->before.paths.size(); ++i) {
@@ -321,6 +350,7 @@ void Transaction::restore() {
     }
     if (impl->driverDirty) {
         try {
+            Api api;
             Drs drs;
             for (auto& s : impl->settings) {
                 if (s.userOverride) drs.set(s.id, s.value);
@@ -342,11 +372,19 @@ void Transaction::restore() {
             impl->driverDirty = false;
         } catch (const std::exception& e) { if (!errors.empty()) errors += "\n"; errors += e.what(); }
     }
+    // Restore topology FIRST so the old percentage's range/recommended scale is valid again.
+    if (impl->windowsScaleDirty) {
+        try {
+            setWindowsScale(impl->windowsScaleKey, impl->previousWindowsScale);
+            verifyWindowsScale(impl->windowsScaleKey, impl->previousWindowsScale);
+            impl->windowsScaleDirty = false;
+        } catch (const std::exception& e) { if (!errors.empty()) errors += "\n"; errors += e.what(); }
+    }
     if (!errors.empty()) throw std::runtime_error(errors);
 }
 std::wstring diagnostics() {
     std::wostringstream out;
-    out << L"Nvidia Quick Switch 0.1.0 — read-only diagnostics\r\n\r\n";
+    out << L"Nvidia Quick Switch 0.2.0 — read-only diagnostics\r\n\r\n";
     Api api;
     NvU32 version = 0; NvAPI_ShortString branch{};
     check(NvAPI_SYS_GetDriverAndBranchVersion(&version, branch), "Read driver version");
@@ -362,6 +400,7 @@ std::wstring diagnostics() {
         out << L"\r\n" << m.name << (m.primary ? L" [primary]" : L"") << L" (" << m.gdiName << L")\r\n"
             << m.key << L"\r\n" << p.width << L" x " << p.height << L" @ " << formatRefresh(p.refreshMilliHz)
             << L" Hz; scaling=" << static_cast<int>(p.scaling) << L"\r\n"
+            << L"Windows scaling: " << (p.windowsScalePercent ? std::to_wstring(p.windowsScalePercent) + L"%" : L"unavailable (custom scaling or unsupported API)") << L"\r\n"
             << L"Global G-SYNC=" << static_cast<int>(p.gsync) << L"; V-SYNC=" << static_cast<int>(p.vsync)
             << L"; FPS=" << p.maxFps << L"\r\n";
     }

@@ -1,6 +1,7 @@
 // Fake NVAPI implementation: this executable does NOT link the NVIDIA library.
 // Tests cannot touch a real display or driver profile.
 #include "backend.h"
+#include "windows_scaling.h"
 #include <windows.h>
 #include <nvapi.h>
 #include <NvApiDriverSettings.h>
@@ -20,6 +21,9 @@ Settings defaults;
 int displayWrites = 0, profileWrites = 0, calls = 0;
 bool failValidation = false, failDisplayWrite = false, failSave = false, unsupportedSetting = false;
 bool wrongOtherMonitor = false, failRestoreDisplay = false;
+std::map<std::wstring, uint32_t> scales;
+int scaleReads = 0, scaleWrites = 0;
+bool scalingUnavailable = false, failScalingWrite = false, failScalingRestore = false, ignoreScalingWrite = false;
 void reset() {
     displays = {};
     displays[0].source.resolution = {3840, 2160, 32}; displays[0].source.bGDIPrimary = 1;
@@ -33,12 +37,28 @@ void reset() {
     defaults[OGL_DEFAULT_SWAP_INTERVAL_SIGN_ID] = 0; defaults[FRL_FPS_ID] = 0;
     displayWrites = profileWrites = calls = 0;
     failValidation = failDisplayWrite = failSave = unsupportedSetting = wrongOtherMonitor = failRestoreDisplay = false;
+    scales = {{L"lcd", 150}, {L"crt", 100}};
+    scaleReads = scaleWrites = 0;
+    scalingUnavailable = failScalingWrite = failScalingRestore = ignoreScalingWrite = false;
 }
 Session* session(NvDRSSessionHandle h) { return reinterpret_cast<Session*>(h); }
 }
 namespace qs {
 std::vector<Monitor> testMonitors() { return {{L"lcd", L"LCD", L"DISPLAY1", true}, {L"crt", L"CRT", L"DISPLAY2", false}}; }
 uint32_t testDisplayId(const Monitor& m) { return m.key == L"lcd" ? 1 : 2; }
+WindowsScaleInfo windowsScale(const std::wstring& key) {
+    ++fake::scaleReads;
+    if (fake::scalingUnavailable) throw std::runtime_error("Simulated unsupported DPI API / custom scaling.");
+    return {fake::scales.at(key), 150, 500};
+}
+void setWindowsScale(const std::wstring& key, uint32_t percent) {
+    const auto info = windowsScale(key); relativeWindowsScale(info, percent);
+    if (info.current == percent) return;
+    ++fake::scaleWrites;
+    if (fake::failScalingRestore && fake::scaleWrites > 1) throw std::runtime_error("Simulated DPI restore failure.");
+    if (!fake::ignoreScalingWrite) fake::scales[key] = percent;
+    if (fake::failScalingWrite) { fake::failScalingWrite = false; throw std::runtime_error("Simulated partial DPI write failure."); }
+}
 }
 extern "C" {
 NvAPI_Status __cdecl NvAPI_Initialize() { ++fake::calls; return NVAPI_OK; }
@@ -162,6 +182,41 @@ int main() {
         qs::Transaction displayOnly; displayOnly.apply(untouched);
         expect(fake::profileWrites == 0 && fake::overrides.empty(), "unchanged driver settings cause no profile writes");
         displayOnly.restore();
+        expect(fake::scaleReads == 0 && fake::scaleWrites == 0, "leave Windows scaling unchanged performs no DPI API calls");
+        fake::reset();
+        auto scaledPreset = crtPreset(); scaledPreset.windowsScalePercent = 125;
+        qs::Transaction scaled; scaled.apply(scaledPreset);
+        expect(fake::scales.at(L"crt") == 125 && fake::scales.at(L"lcd") == 150, "Windows scaling affects target monitor only");
+        scaled.restore();
+        expect(fake::scales.at(L"crt") == 100 && fake::scales.at(L"lcd") == 150 && !scaled.needsRestore(), "Windows scaling is restored with the preset");
+        fake::reset(); fake::scalingUnavailable = true;
+        qs::Transaction unavailable; rejects([&] { unavailable.apply(scaledPreset); }, "unsupported DPI API aborts");
+        expect(!fake::displayWrites && !fake::profileWrites && !fake::scaleWrites, "unsupported DPI aborts before any changes");
+        // Existing presets continue to work when Windows scaling cannot be queried.
+        qs::Transaction unchangedDpi; unchangedDpi.apply(crtPreset()); unchangedDpi.restore();
+        expect(fake::scaleReads == 1, "unchanged DPI does not query unsupported API");
+        fake::reset(); fake::failScalingWrite = true;
+        qs::Transaction partialScale; rejects([&] { partialScale.apply(scaledPreset); }, "partial DPI write fails");
+        originalDisplay("partial DPI failure restores topology");
+        expect(fake::scales.at(L"crt") == 100 && fake::overrides.empty() && !partialScale.needsRestore(), "partial DPI failure restores all three settings groups");
+        fake::reset(); fake::ignoreScalingWrite = true;
+        qs::Transaction ignoredScale; rejects([&] { ignoredScale.apply(scaledPreset); }, "DPI readback mismatch fails");
+        originalDisplay("DPI readback failure restores topology");
+        expect(fake::overrides.empty() && !ignoredScale.needsRestore(), "ignored DPI write does not claim success");
+        fake::reset(); fake::failScalingWrite = true; fake::failScalingRestore = true;
+        qs::Transaction retryScale; rejects([&] { retryScale.apply(scaledPreset); }, "DPI restore failure reported");
+        originalDisplay("DPI restore failure still restores displays");
+        expect(fake::overrides.empty() && retryScale.needsRestore(), "DPI-only failed rollback retains retry state");
+        fake::failScalingRestore = false; retryScale.restore();
+        expect(fake::scales.at(L"crt") == 100 && !retryScale.needsRestore(), "DPI-only restore can be retried");
+        fake::reset(); fake::failSave = true; fake::failRestoreDisplay = true;
+        qs::Transaction failedModeRestore; rejects([&] { failedModeRestore.apply(scaledPreset); }, "failed display rollback with DPI enabled");
+        expect(fake::scales.at(L"crt") == 100 && fake::overrides.empty(), "DPI restoration is attempted even when display restore fails");
+        fake::failRestoreDisplay = false; failedModeRestore.restore();
+        fake::reset();
+        expect(qs::capture(qs::testMonitors()[1]).windowsScalePercent == 100, "capture includes Windows scaling");
+        fake::scalingUnavailable = true;
+        expect(qs::capture(qs::testMonitors()[1]).windowsScalePercent == 0, "capture gracefully leaves unsupported Windows scaling unchanged");
     } catch (const std::exception& e) { std::cerr << "Unexpected: " << e.what() << '\n'; ++failures; }
     if (!failures) std::cout << "All backend transaction tests passed using fake NVAPI. No real display or driver writes.\n";
     return failures ? 1 : 0;
