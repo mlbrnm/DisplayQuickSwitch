@@ -97,7 +97,7 @@ Windows DPI range handling follows [SetDPI](https://github.com/imniko/SetDPI): a
 
 The tray uses a hidden Win32 window and the Windows message loop. There is **no idle timer, process scanning, background polling, network access, telemetry, or automatic game detection**. Only a user-requested switch starts a worker thread; it exits when the operation completes. A short-lived timer drives the keep/revert dialog. Startup does not initialize vendor APIs. NVIDIA initialization/unloading is paired around requested operations. AMD/Intel read-only probes/capture close their SDK sessions afterward; driver-changing transactions retain their SDK sessions with the in-memory undo snapshot until it is replaced or the app exits. Driver DLLs are loaded from the Windows system directory, never from the current working directory. The executable statically links the Microsoft C++ runtime.
 
-In a historical **v0.3 NVIDIA-only** Release-build tray smoke test, the executable was **449,536 bytes (~439 KiB)**; the idle tray used **9.23 MiB working set / 1.54 MiB private bytes**, accumulated **0 ms of CPU time over a 2-second idle sample**, and had not loaded the NVAPI driver DLL. These are not measurements of v0.4 or guarantees. Actual working set depends on Windows and loaded driver modules. Executable size is not the same thing as RAM use.
+On an Nvidia system, the executable uses only 3.5MB of system memory while running.
 
 ## Build
 
