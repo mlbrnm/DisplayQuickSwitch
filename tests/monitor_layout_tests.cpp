@@ -18,7 +18,7 @@ int failures = 0, writes = 0, queries = 0;
 bool noDatabase = false, changeDatabaseModes = false, failTopology = false, failFinal = false;
 bool failRollback = false, rollbackNeeded = false, ignoreTopology = false, clone = false;
 bool restrictedRoutes = false;
-bool onlyOneSource = false;
+    bool onlyOneSource = false;
 void expect(bool value, const char* label) { if (!value) { std::cerr << "FAIL: " << label << '\n'; ++failures; } }
 void rejects(const std::function<void()>& fn, const char* label) { try { fn(); expect(false, label); } catch (const std::exception&) {} }
 void reset() {
@@ -157,6 +157,19 @@ int main() {
         MonitorLayoutTransaction cloned; rejects([&] { cloned.apply(both); }, "cloned input rejected before changes"); expect(writes == 0, "clone rejection causes no writes");
         reset(); auto unsafe = both; for (auto& m : unsafe.monitors) m.enabled = false;
         MonitorLayoutTransaction empty; rejects([&] { empty.apply(unsafe); }, "zero enabled monitors rejected"); expect(writes == 0 && queries == 0, "unsafe layout rejected before APIs");
+        reset(); Preset displayPreset; displayPreset.name = L"Universal CRT"; displayPreset.monitor = L"crt";
+        displayPreset.width = 1280; displayPreset.height = 960; displayPreset.refreshMilliHz = 59940;
+        MonitorLayoutTransaction universal; universal.apply(displayPreset);
+        expect(displays[0].enabled && displays[1].enabled && displays[1].mode.width == 1280 && displays[1].mode.height == 960 &&
+            displays[1].mode.position.x == 0 && displays[0].mode.position.x == -3840 && displays[1].refresh.Numerator == 59940 && displays[1].refresh.Denominator == 1000,
+            "universal display preset preserves other monitors and fractional refresh");
+        universal.verifyApplied(); universal.restore(); original("universal undo restores topology"); expect(displays[1].refresh.Numerator == 85000, "universal undo restores refresh");
+        reset(); failFinal = true; MonitorLayoutTransaction universalFailure;
+        rejects([&] { universalFailure.apply(displayPreset); }, "universal partial modeset failure surfaced"); original("universal partial modeset rolls back");
+        reset(); auto captured = captureWindows({L"crt", L"CRT", L"DISPLAY2", false});
+        expect(captured.width == 1600 && captured.height == 1200 && captured.refreshMilliHz == 85000 && writes == 0, "vendor-independent capture is read-only");
+        reset(); MonitorLayoutTransaction changed; changed.apply(displayPreset); displays[0].mode.width = 640;
+        rejects([&] { changed.verifyApplied(); }, "post-driver modeset verifies every active monitor"); changed.restore(); original("post-driver mismatch undo");
     } catch (const std::exception& e) { std::cerr << "Unexpected: " << e.what() << '\n'; ++failures; }
     if (!failures) std::cout << "Monitor layout tests passed with fake CCD only. No real display changes.\n";
     return failures ? 1 : 0;

@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "windows_scaling.h"
 #include "monitor_layout.h"
+#include "vendor_driver.h"
 #include <windows.h>
 #include <nvapi.h>
 #include <NvApiDriverSettings.h>
@@ -167,6 +168,65 @@ Monitor resolve(const std::wstring& key) {
     for (const auto& m : monitors()) if (sameKey(m.key, key)) return m;
     throw std::runtime_error("Preset monitor is disconnected or disabled. Enable it in Windows first, then try again.");
 }
+void captureNvidiaPolicy(Preset& p) {
+    Drs drs; NVDRS_SETTING s{};
+    if (drs.get(VRRFEATUREINDICATOR_ID, s) && s.u32CurrentValue == 0) p.gsync = Gsync::off;
+    else if (drs.get(VRRREQUESTSTATE_ID, s) && s.u32CurrentValue <= 2) p.gsync = static_cast<Gsync>(s.u32CurrentValue);
+    if (drs.get(VSYNCMODE_ID, s)) {
+        if (s.u32CurrentValue == VSYNCMODE_PASSIVE) p.vsync = Vsync::application;
+        if (s.u32CurrentValue == VSYNCMODE_FORCEOFF) p.vsync = Vsync::off;
+        if (s.u32CurrentValue == VSYNCMODE_FORCEON) p.vsync = Vsync::on;
+    }
+    if (drs.get(FRL_FPS_ID, s) && s.u32CurrentValue <= 1023) p.maxFps = static_cast<int>(s.u32CurrentValue);
+}
+DriverCapabilities nvidiaPolicyCapabilities() {
+    Drs drs; NVDRS_SETTING s{}; DriverCapabilities c; c.vrr = true;
+    for (auto id : {VRRFEATUREINDICATOR_ID, VRRREQUESTSTATE_ID, VRR_MODE_ID, VRR_APP_OVERRIDE_ID, VRR_APP_OVERRIDE_REQUEST_STATE_ID}) c.vrr = drs.get(id, s) && c.vrr;
+    c.vsync = drs.get(VSYNCMODE_ID, s) && drs.get(OGL_DEFAULT_SWAP_INTERVAL_ID, s) && drs.get(OGL_DEFAULT_SWAP_INTERVAL_SIGN_ID, s);
+    c.fps = drs.get(FRL_FPS_ID, s);
+    c.notice = L"NVIDIA policy is global. GPU scaling is unavailable in mixed-GPU layouts; basic display settings and supported global policy still work.";
+    return c;
+}
+class NvidiaPolicy final : public VendorDriver {
+    struct Old { NvU32 id; NVDRS_SETTING setting; bool existed; };
+public:
+    DriverCapabilities capabilities() override { Api api; return nvidiaPolicyCapabilities(); }
+    void capture(Preset& p) override { Api api; captureNvidiaPolicy(p); }
+    void stage(const Preset& p) override {
+        if (p.scaling != Scaling::unchanged) throw std::runtime_error("NVIDIA GPU scaling is unavailable in mixed-GPU layouts. Leave it unchanged.");
+        Api api; Drs drs; auto desired = desiredSettings(p); std::vector<Old> before;
+        for (auto [id, value] : desired) {
+            NVDRS_SETTING old{}; bool exists = drs.get(id, old); before.push_back({id, old, exists});
+            drs.set(id, value); // Validate all requested settings, without saving yet.
+        }
+        auto verify = [desired] {
+            Api api; Drs readback;
+            for (auto [id, value] : desired) { NVDRS_SETTING s{}; if (!readback.get(id, s) || s.u32CurrentValue != value) throw std::runtime_error("NVIDIA global policy failed readback."); }
+        };
+        if (!desired.empty()) edits.push_back({[desired] {
+            Api api; Drs settings; for (auto [id, value] : desired) settings.set(id, value); settings.save();
+        }, [before] {
+            Api api; Drs settings;
+            for (auto& old : before) {
+                const auto& s = old.setting;
+                if (old.existed && !s.isCurrentPredefined && s.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION) settings.set(old.id, s.u32CurrentValue);
+                else { auto r = NvAPI_DRS_DeleteProfileSetting(settings.session, settings.profile, old.id); if (r != NVAPI_SETTING_NOT_FOUND) check(r, "Restore NVIDIA default policy"); }
+            }
+            settings.save(); Drs readback;
+            for (auto& old : before) {
+                NVDRS_SETTING current{}; bool exists = readback.get(old.id, current);
+                const bool override = old.existed && !old.setting.isCurrentPredefined && old.setting.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION;
+                const bool actualOverride = exists && !current.isCurrentPredefined && current.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION;
+                if ((old.existed && (!exists || current.u32CurrentValue != old.setting.u32CurrentValue)) || override != actualOverride)
+                    throw std::runtime_error("Previous NVIDIA policy failed readback.");
+            }
+        }, verify});
+    }
+};
+std::unique_ptr<VendorDriver> openDriver(const Monitor& monitor) {
+    if (monitor.vendor == Vendor::nvidia) return std::make_unique<NvidiaPolicy>();
+    return openVendorDriver(monitor);
+}
 }
 
 std::vector<Monitor> monitors() {
@@ -195,6 +255,16 @@ std::vector<Monitor> monitors() {
             throw std::runtime_error("Cannot identify an active monitor.");
         if (!target.monitorDevicePath[0]) throw std::runtime_error("An active monitor has no stable device identity.");
         Monitor m{target.monitorDevicePath, target.monitorFriendlyDeviceName, source.viewGdiDeviceName, false};
+        m.adapterLow = p.targetInfo.adapterId.LowPart; m.adapterHigh = p.targetInfo.adapterId.HighPart; m.targetId = p.targetInfo.id;
+        DISPLAYCONFIG_ADAPTER_NAME adapter{};
+        adapter.header = {DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME, sizeof(adapter), p.targetInfo.adapterId, 0};
+        if (DisplayConfigGetDeviceInfo(&adapter.header) == ERROR_SUCCESS) {
+            std::wstring path = adapter.adapterDevicePath;
+            std::transform(path.begin(), path.end(), path.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
+            if (path.find(L"VEN_10DE") != std::wstring::npos) m.vendor = Vendor::nvidia;
+            if (path.find(L"VEN_1002") != std::wstring::npos) m.vendor = Vendor::amd;
+            if (path.find(L"VEN_8086") != std::wstring::npos) m.vendor = Vendor::intel;
+        }
         if (m.name.empty()) m.name = L"Monitor";
         DISPLAY_DEVICEW device{}; device.cb = sizeof(device);
         for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &device, 0); ++i) {
@@ -206,7 +276,39 @@ std::vector<Monitor> monitors() {
     return out;
 #endif
 }
+bool usesNvidiaTopology(const std::vector<Monitor>& displays) {
+    return !displays.empty() && std::all_of(displays.begin(), displays.end(), [](auto& m) { return m.vendor == Vendor::nvidia; });
+}
+DriverCapabilities driverCapabilities(const Monitor& m) {
+    DriverCapabilities caps;
+    try {
+        if (usesNvidiaTopology(monitors())) {
+            Api api; auto topology = Topology::read(); topology.find(displayId(m));
+            caps.scaling = caps.integerScaling = true; // Driver validates the requested mode at apply time.
+            Drs drs; NVDRS_SETTING setting{};
+            caps.vrr = true;
+            for (auto id : {VRRFEATUREINDICATOR_ID, VRRREQUESTSTATE_ID, VRR_MODE_ID, VRR_APP_OVERRIDE_ID, VRR_APP_OVERRIDE_REQUEST_STATE_ID})
+                caps.vrr = drs.get(id, setting) && caps.vrr;
+            caps.vsync = drs.get(VSYNCMODE_ID, setting) && drs.get(OGL_DEFAULT_SWAP_INTERVAL_ID, setting) && drs.get(OGL_DEFAULT_SWAP_INTERVAL_SIGN_ID, setting);
+            caps.fps = drs.get(FRL_FPS_ID, setting);
+            caps.notice = L"NVIDIA: G-SYNC/V-SYNC/FPS policy is global. GPU scaling support is validated when applying.";
+        }
+        else caps = openDriver(m)->capabilities();
+    } catch (const std::exception& e) {
+        caps = {};
+        const std::string message = e.what();
+        caps.notice = L"Driver controls unavailable: " + std::wstring(message.begin(), message.end()) + L" Basic display settings remain available.";
+    }
+    return caps;
+}
 Preset capture(const Monitor& m) {
+    if (!usesNvidiaTopology(monitors())) {
+        auto p = captureWindows(m);
+        // A missing vendor SDK must never prevent basic read-only capture.
+        try { openDriver(m)->capture(p); } catch (const std::exception&) {}
+        try { p.windowsScalePercent = windowsScale(m.key).current; } catch (const std::exception&) {}
+        return p;
+    }
     Api api;
     auto t = Topology::read();
     const auto i = t.find(displayId(m));
@@ -233,6 +335,8 @@ Preset capture(const Monitor& m) {
 }
 struct Transaction::Impl {
     std::unique_ptr<MonitorLayoutTransaction> layout;
+    std::unique_ptr<VendorDriver> vendorDriver;
+    bool universal = false;
     struct Setting { NvU32 id, value; bool userOverride, existed; };
     Topology before;
     std::vector<Setting> settings;
@@ -243,9 +347,12 @@ struct Transaction::Impl {
 };
 Transaction::Transaction() : impl(std::make_unique<Impl>()) {}
 Transaction::~Transaction() = default;
-bool Transaction::needsRestore() const { return impl->displayDirty || impl->driverDirty || impl->windowsScaleDirty || (impl->layout && impl->layout->needsRestore()); }
+bool Transaction::needsRestore() const { return impl->displayDirty || impl->driverDirty || impl->windowsScaleDirty || (impl->layout && impl->layout->needsRestore())
+    || (impl->vendorDriver && impl->vendorDriver->needsRestore())
+    ; }
 void Transaction::apply(const LayoutPreset& p) {
     if (needsRestore()) throw std::runtime_error("Transaction already contains applied settings.");
+    impl->universal = false; impl->vendorDriver.reset();
     impl->layout = std::make_unique<MonitorLayoutTransaction>();
     impl->layout->apply(p);
 }
@@ -253,6 +360,40 @@ void Transaction::apply(const Preset& p) {
     validate(p);
     if (needsRestore()) throw std::runtime_error("Transaction already contains applied settings.");
     impl->layout.reset(); // A reused transaction must not route display-settings undo to an old layout snapshot.
+    const bool driverRequested = p.scaling != Scaling::unchanged || p.gsync != Gsync::unchanged || p.vsync != Vsync::unchanged || p.maxFps >= 0;
+    impl->universal = !usesNvidiaTopology(monitors()) || !driverRequested;
+    impl->vendorDriver.reset();
+    if (impl->universal) {
+        auto monitor = resolve(p.monitor);
+        if (driverRequested) {
+            impl->vendorDriver = openDriver(monitor);
+            impl->vendorDriver->stage(p); // Fail/snapshot all driver edits BEFORE a modeset.
+        }
+        if (p.windowsScalePercent) {
+            impl->windowsScaleKey = monitor.key;
+            auto info = windowsScale(monitor.key); impl->previousWindowsScale = info.current;
+            if (!p.width) relativeWindowsScale(info, p.windowsScalePercent);
+        }
+        impl->layout = std::make_unique<MonitorLayoutTransaction>();
+        try {
+            impl->windowsScaleDirty = p.windowsScalePercent != 0;
+            impl->layout->apply(p);
+            if (impl->vendorDriver) impl->vendorDriver->apply();
+            impl->layout->verifyApplied();
+            // Driver scaling can perform its own modeset. Verify Windows mode again afterward.
+            auto current = captureWindows(monitor);
+            if ((p.width && (current.width != p.width || current.height != p.height)) ||
+                (p.refreshMilliHz && std::abs(static_cast<int64_t>(current.refreshMilliHz) - p.refreshMilliHz) > 500))
+                throw std::runtime_error("Vendor driver changed the requested resolution/refresh rate.");
+            if (p.windowsScalePercent) { setWindowsScale(monitor.key, p.windowsScalePercent); verifyWindowsScale(monitor.key, p.windowsScalePercent); }
+        } catch (const std::exception& e) {
+            std::string message = e.what();
+            try { restore(); message += "\nPrevious settings restored."; }
+            catch (const std::exception& r) { message += "\nRESTORATION FAILED: "; message += r.what(); }
+            throw std::runtime_error(message);
+        }
+        return;
+    }
     Api api;
     auto monitor = resolve(p.monitor);
     const auto id = displayId(monitor);
@@ -337,6 +478,19 @@ void Transaction::apply(const Preset& p) {
     }
 }
 void Transaction::restore() {
+    if (impl->universal) {
+        std::string errors;
+        // Undo vendor modesets before restoring the exact original Windows topology.
+        auto attempt = [&](auto&& operation) { try { operation(); } catch (const std::exception& e) { if (!errors.empty()) errors += "\n"; errors += e.what(); } };
+        if (impl->vendorDriver) attempt([&] { impl->vendorDriver->restore(); });
+        if (impl->layout) attempt([&] { impl->layout->restore(); });
+        if (impl->windowsScaleDirty) attempt([&] {
+            setWindowsScale(impl->windowsScaleKey, impl->previousWindowsScale);
+            verifyWindowsScale(impl->windowsScaleKey, impl->previousWindowsScale); impl->windowsScaleDirty = false;
+        });
+        if (!errors.empty()) throw std::runtime_error(errors);
+        return;
+    }
     if (impl->layout) { impl->layout->restore(); return; }
     std::string errors;
     // Try all three even when one fails. DPI restoration must not depend on NVAPI initialization.
@@ -393,7 +547,8 @@ void Transaction::restore() {
 }
 std::wstring diagnostics() {
     std::wostringstream out;
-    out << L"Nvidia Quick Switch 0.3.0 — read-only diagnostics\r\n\r\n";
+    out << L"Display Quick Switch 0.4.0 — read-only diagnostics\r\n\r\n";
+    if (usesNvidiaTopology(monitors())) {
     Api api;
     NvU32 version = 0; NvAPI_ShortString branch{};
     check(NvAPI_SYS_GetDriverAndBranchVersion(&version, branch), "Read driver version");
@@ -404,6 +559,7 @@ std::wstring diagnostics() {
         NvAPI_ShortString name{}; check(NvAPI_GPU_GetFullName(handles[i], name), "Read GPU name");
         out << L"GPU: " << std::wstring(name, name + strlen(name)) << L"\r\n";
     }
+    }
     for (const auto& m : monitors()) {
         auto p = capture(m);
         out << L"\r\n" << m.name << (m.primary ? L" [primary]" : L"") << L" (" << m.gdiName << L")\r\n"
@@ -411,8 +567,12 @@ std::wstring diagnostics() {
             << L" Hz; scaling=" << static_cast<int>(p.scaling) << L"\r\n"
             << L"Windows scaling: " << (p.windowsScalePercent ? std::to_wstring(p.windowsScalePercent) + L"%" : L"unavailable (custom scaling or unsupported API)") << L"\r\n"
             << windowsScaleDiagnostics(m.key) << L"\r\n"
-            << L"Global G-SYNC=" << static_cast<int>(p.gsync) << L"; V-SYNC=" << static_cast<int>(p.vsync)
+            << (m.vendor == Vendor::amd ? L"FreeSync=" : m.vendor == Vendor::intel ? L"Arc Sync=" : L"Global G-SYNC=") << static_cast<int>(p.gsync) << L"; V-SYNC=" << static_cast<int>(p.vsync)
             << L"; FPS=" << p.maxFps << L"\r\n";
+        auto caps = driverCapabilities(m);
+        out << L"Vendor: " << (m.vendor == Vendor::nvidia ? L"NVIDIA" : m.vendor == Vendor::amd ? L"AMD" : m.vendor == Vendor::intel ? L"Intel" : L"Other/unknown")
+            << L"\r\n" << caps.notice << L"\r\nCapabilities: scaling=" << caps.scaling << L", integer=" << caps.integerScaling
+            << L", VRR=" << caps.vrr << L", V-SYNC=" << caps.vsync << L", FPS=" << caps.fps << L"\r\n";
     }
     out << L"\r\nG-SYNC readback is driver policy, not proof of active VRR.\r\nDSR/DLDSR factor switching is not implemented.\r\n";
     return out.str();

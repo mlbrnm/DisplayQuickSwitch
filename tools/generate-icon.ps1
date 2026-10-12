@@ -4,9 +4,9 @@ param([string]$OutputDirectory = "$PSScriptRoot\..\src\assets")
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 [void][System.IO.Directory]::CreateDirectory($OutputDirectory)
-$green = [System.Drawing.ColorTranslator]::FromHtml('#76B900')
+$accent = [System.Drawing.ColorTranslator]::FromHtml('#007AFF')
 $dark = [System.Drawing.ColorTranslator]::FromHtml('#101820')
-$greenBrush = [System.Drawing.SolidBrush]::new($green)
+$accentBrush = [System.Drawing.SolidBrush]::new($accent)
 $darkBrush = [System.Drawing.SolidBrush]::new($dark)
 $images = @()
 try {
@@ -23,10 +23,10 @@ try {
                 $points.Add([System.Drawing.PointF]::new(256 + $corner[1] * [math]::Cos($angle), 256 + $corner[1] * [math]::Sin($angle)))
             }
         }
-        $g.FillPolygon($greenBrush, $points.ToArray())
+        $g.FillPolygon($accentBrush, $points.ToArray())
         $leftEar = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(113, 21), [System.Drawing.PointF]::new(225, 97), [System.Drawing.PointF]::new(126, 192))
         $rightEar = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(399, 21), [System.Drawing.PointF]::new(287, 97), [System.Drawing.PointF]::new(386, 192))
-        $g.FillPolygon($greenBrush, $leftEar); $g.FillPolygon($greenBrush, $rightEar)
+        $g.FillPolygon($accentBrush, $leftEar); $g.FillPolygon($accentBrush, $rightEar)
         $face = [System.Drawing.Drawing2D.GraphicsPath]::new()
         $face.AddLine(145, 221, 143, 100)
         $face.AddLine(143, 100, 223, 174)
@@ -38,13 +38,13 @@ try {
         $face.CloseFigure(); $g.FillPath($darkBrush, $face)
         $leftEye = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(163, 245), [System.Drawing.PointF]::new(232, 259), [System.Drawing.PointF]::new(206, 286), [System.Drawing.PointF]::new(175, 277))
         $rightEye = [System.Drawing.PointF[]]@([System.Drawing.PointF]::new(349, 245), [System.Drawing.PointF]::new(280, 259), [System.Drawing.PointF]::new(306, 286), [System.Drawing.PointF]::new(337, 277))
-        $g.FillPolygon($greenBrush, $leftEye); $g.FillPolygon($greenBrush, $rightEye)
+        $g.FillPolygon($accentBrush, $leftEye); $g.FillPolygon($accentBrush, $rightEye)
         # A slider doubles as the cat's mouth; omit the finer second slider in tiny tray variants.
-        $g.FillRectangle($greenBrush, 195, 317, 122, 12)
-        $g.FillEllipse($greenBrush, 225, 304, 38, 38)
+        $g.FillRectangle($accentBrush, 195, 317, 122, 12)
+        $g.FillEllipse($accentBrush, 225, 304, 38, 38)
         if ($size -ge 32) {
-            $g.FillRectangle($greenBrush, 214, 351, 84, 8)
-            $g.FillEllipse($greenBrush, 270, 341, 28, 28)
+            $g.FillRectangle($accentBrush, 214, 351, 84, 8)
+            $g.FillEllipse($accentBrush, 270, 341, 28, 28)
         }
         $g.Dispose(); $face.Dispose()
         $bitmap = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
@@ -74,4 +74,4 @@ try {
         }
         foreach ($image in $images) { $writer.Write([byte[]]$image.Bytes) }
     } finally { $writer.Dispose() }
-} finally { $greenBrush.Dispose(); $darkBrush.Dispose() }
+} finally { $accentBrush.Dispose(); $darkBrush.Dispose() }

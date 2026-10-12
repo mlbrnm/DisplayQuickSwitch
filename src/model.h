@@ -15,7 +15,7 @@ struct Preset {
     uint32_t width = 0, height = 0, refreshMilliHz = 0;
     Scaling scaling = Scaling::unchanged;
     uint32_t windowsScalePercent = 0; // Windows UI/text scaling on the target monitor; 0 untouched.
-    Gsync gsync = Gsync::unchanged;
+    Gsync gsync = Gsync::unchanged; // Legacy INI name; AMD/Intel use off/fullscreen as per-display VRR off/on.
     Vsync vsync = Vsync::unchanged;
     int maxFps = -1; // -1 untouched, 0 disabled.
 };

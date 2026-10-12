@@ -172,10 +172,65 @@ std::vector<Monitor> connectedMonitors() {
     }
     return result;
 }
-struct MonitorLayoutTransaction::Impl { State before; bool dirty = false; };
+Preset captureWindows(const Monitor& monitor) {
+    auto state = State::read(QDC_ONLY_ACTIVE_PATHS);
+    const auto& entry = state.find(monitor.key);
+    const auto& source = state.source(entry.path);
+    Preset p; p.name = monitor.name; p.monitor = monitor.key;
+    p.width = source.width; p.height = source.height;
+    p.refreshMilliHz = static_cast<uint32_t>(hz(entry.path.targetInfo.refreshRate) * 1000 + 0.5);
+    return p;
+}
+struct MonitorLayoutTransaction::Impl { State before, applied; bool dirty = false; };
 MonitorLayoutTransaction::MonitorLayoutTransaction() : impl(std::make_unique<Impl>()) {}
 MonitorLayoutTransaction::~MonitorLayoutTransaction() = default;
 bool MonitorLayoutTransaction::needsRestore() const { return impl->dirty; }
+void MonitorLayoutTransaction::verifyApplied() const {
+    settled([&](const State& actual) { verifySame(actual, impl->applied, true); });
+}
+void MonitorLayoutTransaction::apply(const Preset& preset) {
+    validate(preset);
+    if (impl->dirty) throw std::runtime_error("Display transaction already contains applied settings.");
+    impl->before = State::read(QDC_ONLY_ACTIVE_PATHS); impl->before.requireExtended();
+    auto desired = impl->before;
+    const auto& entry = desired.find(preset.monitor);
+    auto& source = desired.modes[entry.path.sourceInfo.modeInfoIdx].sourceMode;
+    if (preset.primary) {
+        std::vector<Position> positions;
+        size_t selected = 0;
+        for (size_t i = 0; i < desired.named.size(); ++i) {
+            auto& s = desired.source(desired.named[i].path);
+            positions.push_back({s.position.x, s.position.y});
+            if (same(desired.named[i].monitor.key, preset.monitor)) selected = i;
+        }
+        auto rebased = rebasePositions(positions, selected);
+        for (size_t i = 0; i < desired.named.size(); ++i)
+            desired.modes[desired.named[i].path.sourceInfo.modeInfoIdx].sourceMode.position = {rebased[i].x, rebased[i].y};
+    }
+    if (preset.width) { source.width = preset.width; source.height = preset.height; }
+    for (auto& path : desired.paths) {
+        if (sameAdapter(path.targetInfo.adapterId, entry.path.targetInfo.adapterId) && path.targetInfo.id == entry.path.targetInfo.id) {
+            if (preset.refreshMilliHz) path.targetInfo.refreshRate = {preset.refreshMilliHz, 1000};
+            // Let Windows select the signal timing for the requested desktop mode/rate.
+            if (preset.width || preset.refreshMilliHz) path.targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+        }
+    }
+    for (auto& named : desired.named)
+        for (const auto& path : desired.paths)
+            if (sameAdapter(path.targetInfo.adapterId, named.path.targetInfo.adapterId) && path.targetInfo.id == named.path.targetInfo.id) named.path = path;
+    constexpr UINT32 supplied = SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES;
+    desired.write(supplied | SDC_VALIDATE);
+    try {
+        impl->dirty = true;
+        desired.write(supplied | SDC_APPLY | SDC_SAVE_TO_DATABASE);
+        impl->applied = settled([&](const State& actual) { verifySame(actual, desired, true); });
+    } catch (const std::exception& e) {
+        std::string message = e.what();
+        try { restore(); message += "\nPrevious display settings restored."; }
+        catch (const std::exception& r) { message += "\nRESTORATION FAILED: "; message += r.what(); }
+        throw std::runtime_error(message);
+    }
+}
 void MonitorLayoutTransaction::apply(const LayoutPreset& preset) {
     validate(preset);
     if (impl->dirty) throw std::runtime_error("Layout transaction already contains applied settings.");

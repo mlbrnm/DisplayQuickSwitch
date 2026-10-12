@@ -59,7 +59,7 @@ int main() {
     invalid = p; invalid.maxFps = 1024; rejects([&] { validate(invalid); }, "FPS bounds");
     auto invalidScale = p; invalidScale.windowsScalePercent = 110; rejects([&] { validate(invalidScale); }, "Windows scale validation");
     wchar_t temp[32768]{}; GetTempPathW(32768, temp);
-    auto directory = std::filesystem::path(temp) / (L"NvidiaQuickSwitch-tests-" + std::to_wstring(GetCurrentProcessId()));
+    auto directory = std::filesystem::path(temp) / (L"DisplayQuickSwitch-tests-" + std::to_wstring(GetCurrentProcessId()));
     auto file = directory / L"presets.ini";
     auto layoutFile = directory / L"layouts.ini";
     try {
@@ -99,6 +99,28 @@ int main() {
         rejects([&] { saveLayouts(layoutFile, {badLayout}); }, "invalid layout cannot overwrite saved layouts");
         expect(loadLayouts(layoutFile).size() == 1, "invalid layout save preserves existing file");
         saveLayouts(layoutFile, {}); expect(loadLayouts(layoutFile).empty(), "empty layouts file");
+        {
+            struct Environment {
+                std::wstring old;
+                Environment(const std::filesystem::path& root) {
+                    wchar_t value[32768]{}; GetEnvironmentVariableW(L"LOCALAPPDATA", value, 32768); old = value;
+                    SetEnvironmentVariableW(L"LOCALAPPDATA", root.c_str());
+                }
+                ~Environment() { SetEnvironmentVariableW(L"LOCALAPPDATA", old.empty() ? nullptr : old.c_str()); }
+            } environment(directory);
+            const auto legacyDirectory = directory / L"NvidiaQuickSwitch";
+            const auto current = directory / L"DisplayQuickSwitch";
+            savePresets(legacyDirectory / L"presets.ini", {p}); saveLayouts(legacyDirectory / L"layouts.ini", {layout});
+            auto migrated = configPath();
+            expect(migrated == current / L"presets.ini" && loadPresets(migrated)[0].name == p.name && loadLayouts(layoutConfigPath())[0].name == layout.name,
+                "rename migrates display and layout presets");
+            expect(std::filesystem::exists(legacyDirectory / L"presets.ini") && std::filesystem::exists(legacyDirectory / L"layouts.ini"), "migration retains originals");
+            savePresets(migrated, {unchanged}); configPath();
+            expect(loadPresets(migrated)[0].name == unchanged.name, "migration never overwrites new-version edits");
+            for (auto root : {legacyDirectory, current}) {
+                std::filesystem::remove(root / L"presets.ini"); std::filesystem::remove(root / L"layouts.ini"); std::filesystem::remove(root);
+            }
+        }
         std::filesystem::remove(layoutFile);
         std::filesystem::remove(file); std::filesystem::remove(directory);
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; ++failures; }

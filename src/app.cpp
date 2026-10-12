@@ -22,7 +22,7 @@ std::wstring widen(const char* s) {
     text.pop_back(); return text;
 }
 void error(HWND owner, const std::exception& e) {
-    MessageBoxW(owner, widen(e.what()).c_str(), L"Nvidia Quick Switch", MB_OK | MB_ICONERROR);
+    MessageBoxW(owner, widen(e.what()).c_str(), L"Display Quick Switch", MB_OK | MB_ICONERROR);
     try {
         auto path = qs::configPath().parent_path();
         std::filesystem::create_directories(path);
@@ -65,7 +65,46 @@ int comboValue(HWND d, int id) {
     if (i == CB_ERR) throw std::runtime_error("Select a value from each list.");
     return static_cast<int>(SendMessageW(h, CB_GETITEMDATA, i, 0));
 }
-struct Editor { qs::Preset preset; std::vector<qs::Monitor> monitors; };
+struct Editor { qs::Preset preset; std::vector<qs::Monitor> monitors; std::vector<qs::DriverCapabilities> capabilities; };
+void updateDriverFields(HWND d, const Editor& e) {
+    auto index = SendDlgItemMessageW(d, IDC_MONITOR, CB_GETCURSEL, 0, 0);
+    qs::DriverCapabilities c;
+    qs::Vendor vendor = qs::Vendor::unknown;
+    if (index >= 0 && static_cast<size_t>(index) < e.monitors.size()) { c = e.capabilities[index]; vendor = e.monitors[index].vendor; }
+    auto visible = [&](int id, bool show) { ShowWindow(GetDlgItem(d, id), show ? SW_SHOW : SW_HIDE); EnableWindow(GetDlgItem(d, id), show); };
+    const bool scale = c.scaling || c.integerScaling;
+    for (auto id : {IDC_SCALING, IDC_SCALING_LABEL}) visible(id, scale);
+    for (auto id : {IDC_GSYNC, IDC_GSYNC_LABEL}) visible(id, c.vrr);
+    for (auto id : {IDC_VSYNC, IDC_VSYNC_LABEL}) visible(id, c.vsync);
+    for (auto id : {IDC_FPS, IDC_FPS_LABEL, IDC_FPS_HINT}) visible(id, c.fps);
+    int scaling = comboValue(d, IDC_SCALING), vrr = comboValue(d, IDC_GSYNC);
+    std::vector<std::pair<const wchar_t*, int>> modes{{L"Leave unchanged", 0}};
+    if (c.scaling) { modes.push_back({L"No scaling / centered (GPU)", 3}); modes.push_back({L"Aspect ratio (GPU)", 5}); modes.push_back({L"Full-screen / stretch (GPU)", 2}); }
+    if (c.integerScaling) modes.push_back({L"Integer scaling (GPU)", 8});
+    if ((scaling == 8 && !c.integerScaling) || (scaling != 0 && scaling != 8 && !c.scaling)) scaling = 0;
+    fillCombo(d, IDC_SCALING, modes, scaling);
+    if (vendor != qs::Vendor::nvidia) {
+        if (!c.vrr || vrr == 2) vrr = -1;
+        fillCombo(d, IDC_GSYNC, {{L"Leave unchanged", -1}, {L"Off (this display)", 0}, {L"On (this display)", 1}}, vrr);
+    } else {
+        fillCombo(d, IDC_GSYNC, {{L"Leave unchanged", -1}, {L"Off", 0}, {L"On — full-screen only", 1}, {L"On — full-screen and windowed", 2}}, c.vrr ? vrr : -1);
+    }
+    setText(d, IDC_GSYNC_LABEL, vendor == qs::Vendor::amd ? L"AMD FreeSync" : vendor == qs::Vendor::intel ? L"Intel Arc Sync" : L"Global G-SYNC");
+    setText(d, IDC_VSYNC_LABEL, vendor == qs::Vendor::amd ? L"V-SYNC (OpenGL)" : vendor == qs::Vendor::intel ? L"Gaming V-SYNC" : L"Global V-SYNC");
+    setText(d, IDC_FPS_LABEL, vendor == qs::Vendor::nvidia ? L"Global max FPS" : L"GPU max FPS");
+    setText(d, IDC_FPS_HINT, L"Blank = unchanged; 0 = off; " + std::to_wstring(c.minFps) + L"–" + std::to_wstring(c.maxFps) + L" (step " + std::to_wstring(c.fpsStep) + L")");
+    std::wstring notice = c.notice;
+    if (!c.scaling || !c.integerScaling || !c.vrr || !c.vsync || !c.fps) {
+        notice += L"\r\nUnavailable: ";
+        if (!c.scaling) notice += L"GPU scaling; ";
+        if (!c.integerScaling) notice += L"integer scaling; ";
+        if (!c.vrr) notice += L"VRR; ";
+        if (!c.vsync) notice += L"V-SYNC; ";
+        if (!c.fps) notice += L"FPS limiter; ";
+        notice += L"saving leaves these unchanged.";
+    }
+    setText(d, IDC_DRIVER_NOTICE, notice); EnableWindow(GetDlgItem(d, IDC_DRIVER_NOTICE), FALSE);
+}
 void showFields(HWND d, const qs::Preset& p) {
     setText(d, IDC_NAME, p.name);
     CheckDlgButton(d, IDC_PRIMARY, p.primary ? BST_CHECKED : BST_UNCHECKED);
@@ -106,11 +145,12 @@ INT_PTR CALLBACK editorProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
         SendDlgItemMessageW(d, IDC_HEIGHT, EM_SETLIMITTEXT, 5, 0);
         SendDlgItemMessageW(d, IDC_REFRESH, EM_SETLIMITTEXT, 8, 0);
         SendDlgItemMessageW(d, IDC_FPS, EM_SETLIMITTEXT, 4, 0);
-        showFields(d, e->preset); centerPrimary(d); return TRUE;
+        showFields(d, e->preset); updateDriverFields(d, *e); centerPrimary(d); return TRUE;
     }
     if (msg == WM_COMMAND && e) {
         auto id = LOWORD(w);
         if (id == IDCANCEL) { EndDialog(d, IDCANCEL); return TRUE; }
+        if (id == IDC_MONITOR && HIWORD(w) == CBN_SELCHANGE) { updateDriverFields(d, *e); return TRUE; }
         if (id == IDOK || id == IDC_CAPTURE) {
             try {
                 auto index = SendDlgItemMessageW(d, IDC_MONITOR, CB_GETCURSEL, 0, 0);
@@ -119,7 +159,7 @@ INT_PTR CALLBACK editorProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
                 if (id == IDC_CAPTURE) {
                     auto p = qs::capture(e->monitors[index]);
                     p.name = text(d, IDC_NAME); p.primary = IsDlgButtonChecked(d, IDC_PRIMARY) == BST_CHECKED;
-                    showFields(d, p); return TRUE;
+                    showFields(d, p); updateDriverFields(d, *e); return TRUE;
                 }
                 auto p = e->preset;
                 p.name = text(d, IDC_NAME); p.monitor = e->monitors[index].key;
@@ -132,7 +172,13 @@ INT_PTR CALLBACK editorProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
                 p.windowsScalePercent = static_cast<uint32_t>(comboValue(d, IDC_WINDOWS_SCALE));
                 p.gsync = static_cast<qs::Gsync>(comboValue(d, IDC_GSYNC));
                 p.vsync = static_cast<qs::Vsync>(comboValue(d, IDC_VSYNC));
-                p.maxFps = fps.empty() ? -1 : static_cast<int>(qs::parseUnsigned(fps, 1023));
+                const auto& caps = e->capabilities[index];
+                p.maxFps = !caps.fps || fps.empty() ? -1 : static_cast<int>(qs::parseUnsigned(fps, 1023));
+                if (!caps.vrr) p.gsync = qs::Gsync::unchanged;
+                if (!caps.vsync) p.vsync = qs::Vsync::unchanged;
+                if (!caps.fps) p.maxFps = -1;
+                if (p.maxFps > 0 && (p.maxFps < caps.minFps || p.maxFps > caps.maxFps || (p.maxFps - caps.minFps) % caps.fpsStep))
+                    throw std::runtime_error("FPS cap is outside the driver-supported range/step shown in the editor.");
                 qs::validate(p); e->preset = std::move(p); EndDialog(d, IDOK);
             } catch (const std::exception& ex) { error(d, ex); }
             return TRUE;
@@ -141,7 +187,8 @@ INT_PTR CALLBACK editorProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
     return FALSE;
 }
 bool editPreset(HWND owner, qs::Preset& p) {
-    Editor e{p, qs::monitors()};
+    Editor e{p, qs::monitors(), {}};
+    for (const auto& monitor : e.monitors) e.capabilities.push_back(qs::driverCapabilities(monitor));
     if (e.monitors.empty()) throw std::runtime_error("No active monitors found.");
     if (p.monitor.empty()) {
         auto m = std::find_if(e.monitors.begin(), e.monitors.end(), [](auto& x) { return x.primary; });
@@ -255,7 +302,7 @@ INT_PTR CALLBACK managerProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_INITDIALOG) {
         m = reinterpret_cast<Manager*>(l); SetWindowLongPtrW(d, DWLP_USER, l);
         if (m->layouts) {
-            SetWindowTextW(d, L"Nvidia Quick Switch — monitor layouts");
+            SetWindowTextW(d, L"Display Quick Switch — monitor layouts");
             setText(d, IDC_MANAGER_INFO, L"Layouts enable/disable monitors and choose the primary. No driver/DPI edits.");
         }
         refreshList(d, *m); centerPrimary(d); return TRUE;
@@ -272,7 +319,7 @@ INT_PTR CALLBACK managerProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
                     auto next = presets;
                     if (id != IDC_NEW && (index < 0 || static_cast<size_t>(index) >= next.size())) return TRUE;
                     if (id == IDC_DELETE) {
-                        if (MessageBoxW(d, L"Delete this preset?", L"Nvidia Quick Switch", MB_YESNO | MB_ICONQUESTION) != IDYES) return TRUE;
+                        if (MessageBoxW(d, L"Delete this preset?", L"Display Quick Switch", MB_YESNO | MB_ICONQUESTION) != IDYES) return TRUE;
                         next.erase(next.begin() + index);
                     } else {
                         auto p = id == IDC_NEW ? P{} : next[index];
@@ -313,7 +360,7 @@ std::wstring executable() {
 }
 bool startupEnabled() {
     wchar_t value[32768]{}; DWORD size = sizeof(value);
-    auto result = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"NvidiaQuickSwitch",
+    auto result = RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"DisplayQuickSwitch",
                               RRF_RT_REG_SZ, nullptr, value, &size);
     return result == ERROR_SUCCESS && std::wstring(value) == L"\"" + executable() + L"\"";
 }
@@ -324,8 +371,10 @@ void toggleStartup() {
                         KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
         throw std::runtime_error("Cannot edit the current user's startup entry.");
     auto value = L"\"" + executable() + L"\"";
-    auto result = enabled ? RegDeleteValueW(key, L"NvidiaQuickSwitch") :
-        RegSetValueExW(key, L"NvidiaQuickSwitch", 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), static_cast<DWORD>((value.size() + 1) * 2));
+    auto result = enabled ? RegDeleteValueW(key, L"DisplayQuickSwitch") :
+        RegSetValueExW(key, L"DisplayQuickSwitch", 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), static_cast<DWORD>((value.size() + 1) * 2));
+    // Explicitly toggling startup also removes the legacy entry to avoid duplicate launches.
+    if (result == ERROR_SUCCESS) RegDeleteValueW(key, L"NvidiaQuickSwitch");
     RegCloseKey(key);
     if (result != ERROR_SUCCESS) throw std::runtime_error("Cannot update the startup entry.");
 }
@@ -352,7 +401,7 @@ struct App {
         icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; icon.uCallbackMessage = TrayMessage;
         icon.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH), IMAGE_ICON,
             GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
-        wcscpy_s(icon.szTip, L"Nvidia Quick Switch");
+        wcscpy_s(icon.szTip, L"Display Quick Switch");
         if (!Shell_NotifyIconW(NIM_ADD, &icon)) throw std::runtime_error("Cannot add the tray icon.");
         icon.uVersion = NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION, &icon);
     }
@@ -390,7 +439,7 @@ struct App {
     }
     template<class P> void applyPreset(P p) {
         if (busy || managing) return;
-        busy = true; tooltip(L"Nvidia Quick Switch — applying…");
+        busy = true; tooltip(L"Display Quick Switch — applying…");
         worker = std::thread([this, p] {
             auto r = std::make_unique<Result>(); r->transaction = std::make_unique<qs::Transaction>(); r->label = p.name;
             try { r->transaction->apply(p); } catch (const std::exception& e) { r->error = e.what(); }
@@ -402,7 +451,7 @@ struct App {
     void restore() {
         if (!undo || worker.joinable()) return;
         if (confirm) { DestroyWindow(confirm); confirm = nullptr; }
-        busy = true; tooltip(L"Nvidia Quick Switch — restoring…");
+        busy = true; tooltip(L"Display Quick Switch — restoring…");
         worker = std::thread([this, tx = std::move(undo)]() mutable {
             auto r = std::make_unique<Result>(); r->transaction = std::move(tx); r->restoring = true;
             try { r->transaction->restore(); } catch (const std::exception& e) { r->error = e.what(); }
@@ -429,7 +478,7 @@ INT_PTR CALLBACK confirmProc(HWND d, UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_CLOSE || (msg == WM_COMMAND && LOWORD(w) == IDCANCEL)) { KillTimer(d, 1); a->restore(); return TRUE; }
     if (msg == WM_COMMAND && LOWORD(w) == IDOK) {
         KillTimer(d, 1); a->busy = false; a->confirm = nullptr; DestroyWindow(d);
-        a->tooltip(L"Nvidia Quick Switch — last applied: " + a->last); return TRUE;
+        a->tooltip(L"Display Quick Switch — last applied: " + a->last); return TRUE;
     }
     return FALSE;
 }
@@ -453,10 +502,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT msg, WPARAM w, LPARAM l) {
             if (a->worker.joinable()) a->worker.join();
             if (!r->error.empty()) {
                 if (r->transaction->needsRestore()) a->undo = std::move(r->transaction);
-                a->busy = false; a->tooltip(L"Nvidia Quick Switch — operation failed");
+                a->busy = false; a->tooltip(L"Display Quick Switch — operation failed");
                 error(window, std::runtime_error(r->error)); return 0;
             }
-            if (r->restoring) { a->busy = false; a->last.clear(); a->tooltip(L"Nvidia Quick Switch — previous settings restored"); return 0; }
+            if (r->restoring) { a->busy = false; a->last.clear(); a->tooltip(L"Display Quick Switch — previous settings restored"); return 0; }
             a->undo = std::move(r->transaction); a->last = r->label;
             if (!CreateDialogParamW(instance, MAKEINTRESOURCEW(IDD_CONFIRM), window, confirmProc, reinterpret_cast<LPARAM>(a))) {
                 a->restore(); throw std::runtime_error("Cannot create the confirmation dialog; restoring previous settings.");
@@ -501,10 +550,11 @@ LRESULT CALLBACK windowProc(HWND window, UINT msg, WPARAM w, LPARAM l) {
 int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int) {
     instance = h;
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
+    // Keep the legacy mutex identity so old/new binaries cannot race display transactions.
     HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\NvidiaQuickSwitch.Tray.v1");
     if (!mutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(nullptr, L"Nvidia Quick Switch is already running. Look for it in the tray overflow menu.", L"Nvidia Quick Switch", MB_OK);
+        MessageBoxW(nullptr, L"Display Quick Switch is already running. Look for it in the tray overflow menu.", L"Display Quick Switch", MB_OK);
         CloseHandle(mutex); return 0;
     }
     int exitCode = 0;
@@ -512,13 +562,13 @@ int WINAPI wWinMain(HINSTANCE h, HINSTANCE, PWSTR, int) {
         App app; app.file = qs::configPath(); app.presets = qs::loadPresets(app.file);
         app.layoutFile = qs::layoutConfigPath(); app.layouts = qs::loadLayouts(app.layoutFile);
         WNDCLASSEXW cls{}; cls.cbSize = sizeof(cls); cls.hInstance = h; cls.lpfnWndProc = windowProc;
-        cls.lpszClassName = L"NvidiaQuickSwitch.Tray"; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        cls.lpszClassName = L"DisplayQuickSwitch.Tray"; cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         cls.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH));
         cls.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_QUICKSWITCH), IMAGE_ICON,
             GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
         if (!RegisterClassExW(&cls)) throw std::runtime_error("Cannot register the tray window.");
         // Hidden top-level window, not a message-only window: receives Explorer restart broadcasts.
-        auto window = CreateWindowExW(0, cls.lpszClassName, L"Nvidia Quick Switch", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, h, &app);
+        auto window = CreateWindowExW(0, cls.lpszClassName, L"Display Quick Switch", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, h, &app);
         if (!window) throw std::runtime_error("Cannot create the tray window.");
         app.addIcon();
         // Startup never changes any monitor/driver state or automatically applies a preset.

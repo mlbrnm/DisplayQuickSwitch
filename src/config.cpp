@@ -8,7 +8,16 @@ std::filesystem::path configPath() {
     wchar_t value[32768]{};
     auto n = GetEnvironmentVariableW(L"LOCALAPPDATA", value, 32768);
     if (!n || n >= 32768) throw std::runtime_error("LOCALAPPDATA is unavailable.");
-    return std::filesystem::path(value) / L"NvidiaQuickSwitch" / L"presets.ini";
+    auto directory = std::filesystem::path(value) / L"DisplayQuickSwitch";
+    // Copy existing data once, without deleting originals or overwriting new-version files.
+    auto legacy = std::filesystem::path(value) / L"NvidiaQuickSwitch";
+    for (auto name : {L"presets.ini", L"layouts.ini"}) {
+        if (!std::filesystem::exists(directory / name) && std::filesystem::exists(legacy / name)) {
+            std::filesystem::create_directories(directory);
+            std::filesystem::copy_file(legacy / name, directory / name, std::filesystem::copy_options::skip_existing);
+        }
+    }
+    return directory / L"presets.ini";
 }
 std::filesystem::path layoutConfigPath() { return configPath().parent_path() / L"layouts.ini"; }
 namespace {
@@ -87,7 +96,7 @@ std::vector<Preset> loadPresets(const std::filesystem::path& file) {
 }
 void savePresets(const std::filesystem::path& file, const std::vector<Preset>& presets) {
     if (presets.size() > 100) throw std::runtime_error("At most 100 presets are supported.");
-    std::wstring text = L"; Nvidia Quick Switch v2. Driver settings are global. WindowsScalePercent=0 means unchanged.\r\n";
+    std::wstring text = L"; Display Quick Switch v2. Driver setting scope varies by vendor. WindowsScalePercent=0 means unchanged.\r\n";
     for (const auto& p : presets) {
         validate(p);
         text += L"\r\n[Preset]\r\nName=" + trim(p.name) + L"\r\nMonitor=" + p.monitor;

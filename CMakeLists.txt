@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(NvidiaQuickSwitch VERSION 0.3.0 LANGUAGES CXX RC)
+project(DisplayQuickSwitch VERSION 0.4.0 LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Build with the Microsoft C++ toolchain for Windows x64.")
 endif()
@@ -12,19 +12,40 @@ FetchContent_Declare(nvapi
   URL https://github.com/NVIDIA/nvapi/archive/70d337db9186e968eab622f7e786de7e437faf3d.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(nvapi)
-add_library(qs_core STATIC src/model.cpp src/config.cpp src/windows_scaling_model.cpp)
+option(QS_ENABLE_AMD_ADLX "Enable AMD ADLX (review its SDK license and distribution/EULA requirements first)" OFF)
+if(QS_ENABLE_AMD_ADLX)
+  FetchContent_Declare(adlx
+    URL https://github.com/GPUOpen-LibrariesAndSDKs/ADLX/archive/32b5a740d42295c5dfe9026b9f52683da0f3af91.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(adlx)
+endif()
+FetchContent_Declare(igcl
+  URL https://github.com/intel/drivers.gpu.control-library/archive/b6c462933502e13d1537dd5024949a51be30e63d.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+# Only public headers are used; implementations are loaded from the installed drivers.
+FetchContent_MakeAvailable(igcl)
+add_library(qs_core STATIC src/model.cpp src/config.cpp src/windows_scaling_model.cpp src/vendor_transaction.cpp)
 target_include_directories(qs_core PUBLIC src)
 target_compile_definitions(qs_core PUBLIC UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(qs_core PRIVATE /W4 /permissive- /utf-8)
-add_executable(NvidiaQuickSwitch WIN32 src/app.cpp src/backend.cpp src/windows_scaling.cpp src/monitor_layout.cpp src/app.rc)
-target_include_directories(NvidiaQuickSwitch PRIVATE "${nvapi_SOURCE_DIR}")
-target_compile_options(NvidiaQuickSwitch PRIVATE /W4 /permissive- /utf-8)
-target_link_options(NvidiaQuickSwitch PRIVATE /MANIFEST:NO)
-target_link_libraries(NvidiaQuickSwitch PRIVATE qs_core
+add_executable(DisplayQuickSwitch WIN32 src/app.cpp src/backend.cpp src/vendor_driver.cpp src/windows_scaling.cpp src/monitor_layout.cpp src/app.rc)
+target_include_directories(DisplayQuickSwitch PRIVATE "${nvapi_SOURCE_DIR}" "${igcl_SOURCE_DIR}/include")
+if(QS_ENABLE_AMD_ADLX)
+  target_compile_definitions(DisplayQuickSwitch PRIVATE QS_ENABLE_AMD_ADLX)
+  target_include_directories(DisplayQuickSwitch PRIVATE "${adlx_SOURCE_DIR}/SDK/Include")
+  add_custom_command(TARGET DisplayQuickSwitch POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${adlx_SOURCE_DIR}/ADLX SDK License Agreement.pdf"
+    "$<TARGET_FILE_DIR:DisplayQuickSwitch>/AMD-ADLX-SDK-LICENSE.pdf")
+endif()
+target_compile_options(DisplayQuickSwitch PRIVATE /W4 /permissive- /utf-8)
+target_link_options(DisplayQuickSwitch PRIVATE /MANIFEST:NO)
+target_link_libraries(DisplayQuickSwitch PRIVATE qs_core
   "${nvapi_SOURCE_DIR}/amd64/nvapi64.lib" user32 shell32 comctl32 ole32 advapi32)
-add_custom_command(TARGET NvidiaQuickSwitch POST_BUILD
+add_custom_command(TARGET DisplayQuickSwitch POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${nvapi_SOURCE_DIR}/License.txt"
-  "$<TARGET_FILE_DIR:NvidiaQuickSwitch>/NVIDIA-NVAPI-LICENSE.txt")
+  "$<TARGET_FILE_DIR:DisplayQuickSwitch>/NVIDIA-NVAPI-LICENSE.txt"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${igcl_SOURCE_DIR}/LICENSE"
+  "$<TARGET_FILE_DIR:DisplayQuickSwitch>/INTEL-IGCL-LICENSE.txt")
 include(CTest)
 if(BUILD_TESTING)
   add_executable(qs_tests tests/core_tests.cpp)
@@ -49,4 +70,10 @@ if(BUILD_TESTING)
   target_compile_options(qs_layout_tests PRIVATE /W4 /permissive- /utf-8)
   target_link_libraries(qs_layout_tests PRIVATE qs_core)
   add_test(NAME monitor_layouts COMMAND qs_layout_tests)
+  add_executable(qs_vendor_tests tests/vendor_tests.cpp src/vendor_driver.cpp)
+  target_include_directories(qs_vendor_tests PRIVATE "${igcl_SOURCE_DIR}/include")
+  target_compile_definitions(qs_vendor_tests PRIVATE QS_TEST_VENDOR)
+  target_compile_options(qs_vendor_tests PRIVATE /W4 /permissive- /utf-8)
+  target_link_libraries(qs_vendor_tests PRIVATE qs_core)
+  add_test(NAME vendor_driver_transactions COMMAND qs_vendor_tests)
 endif()

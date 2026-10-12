@@ -4,13 +4,36 @@
 #pragma code_page(65001)
 1 RT_MANIFEST "app.manifest"
 IDI_QUICKSWITCH ICON "assets/quickswitch.ico"
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,4,0,0
+PRODUCTVERSION 0,4,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Display Quick Switch"
+      VALUE "ProductName", "Display Quick Switch"
+      VALUE "InternalName", "DisplayQuickSwitch"
+      VALUE "OriginalFilename", "DisplayQuickSwitch.exe"
+      VALUE "FileVersion", "0.4.0"
+      VALUE "ProductVersion", "0.4.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END
 
 IDD_MANAGER DIALOGEX 0, 0, 310, 176
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Nvidia Quick Switch — presets"
+CAPTION "Display Quick Switch — presets"
 FONT 9, "Segoe UI"
 BEGIN
-  LTEXT "Presets select a primary display and change global NVIDIA settings.", IDC_MANAGER_INFO, 10, 9, 290, 20
+  LTEXT "Presets change display settings and supported GPU driver features.", IDC_MANAGER_INFO, 10, 9, 290, 20
   LISTBOX IDC_PRESETS, 10, 32, 219, 106, LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP | WS_BORDER
   PUSHBUTTON "New…", IDC_NEW, 236, 32, 64, 16
   PUSHBUTTON "Edit…", IDC_EDIT, 236, 54, 64, 16
@@ -31,12 +54,12 @@ BEGIN
   LTEXT "Primary monitor", -1, 12, 182, 65, 12
   COMBOBOX IDC_LAYOUT_PRIMARY, 80, 179, 291, 110, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
   PUSHBUTTON "Capture current layout", IDC_CAPTURE, 12, 207, 115, 18
-  LTEXT "At least one monitor must remain enabled.\nNo NVIDIA policy or DPI settings are edited.", -1, 138, 205, 235, 24
+  LTEXT "At least one monitor must remain enabled.\nNo driver policy or DPI settings are edited.", -1, 138, 205, 235, 24
   DEFPUSHBUTTON "Save", IDOK, 243, 236, 61, 18
   PUSHBUTTON "Cancel", IDCANCEL, 310, 236, 61, 18
 END
 
-IDD_EDITOR DIALOGEX 0, 0, 350, 317
+IDD_EDITOR DIALOGEX 0, 0, 350, 364
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Display preset"
 FONT 9, "Segoe UI"
@@ -53,21 +76,22 @@ BEGIN
   LTEXT "Refresh rate (Hz)", -1, 12, 106, 83, 12
   EDITTEXT IDC_REFRESH, 98, 103, 69, 14, ES_AUTOHSCROLL
   LTEXT "Blank resolution/rate = leave unchanged", -1, 176, 106, 163, 24
-  LTEXT "GPU scaling", -1, 12, 133, 76, 12
+  LTEXT "GPU scaling", IDC_SCALING_LABEL, 12, 133, 76, 12
   COMBOBOX IDC_SCALING, 98, 130, 238, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
   LTEXT "Windows scale", -1, 12, 157, 82, 12
   COMBOBOX IDC_WINDOWS_SCALE, 98, 154, 238, 180, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-  LTEXT "Global G-SYNC", -1, 12, 183, 82, 12
+  LTEXT "Global G-SYNC", IDC_GSYNC_LABEL, 12, 183, 82, 12
   COMBOBOX IDC_GSYNC, 98, 180, 238, 100, CBS_DROPDOWNLIST | WS_TABSTOP
-  LTEXT "Global V-SYNC", -1, 12, 207, 82, 12
+  LTEXT "Global V-SYNC", IDC_VSYNC_LABEL, 12, 207, 82, 12
   COMBOBOX IDC_VSYNC, 98, 204, 238, 100, CBS_DROPDOWNLIST | WS_TABSTOP
-  LTEXT "Global max FPS", -1, 12, 231, 82, 12
+  LTEXT "Global max FPS", IDC_FPS_LABEL, 12, 231, 82, 12
   EDITTEXT IDC_FPS, 98, 228, 69, 14, ES_AUTOHSCROLL | ES_NUMBER
-  LTEXT "Blank = unchanged; 0 = off; 1–1023 = cap", -1, 176, 231, 163, 20
-  PUSHBUTTON "Capture current settings", IDC_CAPTURE, 12, 259, 116, 18
-  LTEXT "Other monitors stay enabled. Apply before starting a game.\nDSR/DLDSR factors are not changed.", -1, 140, 257, 198, 27
-  DEFPUSHBUTTON "Save", IDOK, 208, 292, 61, 18
-  PUSHBUTTON "Cancel", IDCANCEL, 275, 292, 61, 18
+  LTEXT "Blank = unchanged; 0 = off; 1–1023 = cap", IDC_FPS_HINT, 176, 231, 163, 20
+  LTEXT "", IDC_DRIVER_NOTICE, 12, 256, 326, 49
+  PUSHBUTTON "Capture current settings", IDC_CAPTURE, 12, 310, 116, 18
+  LTEXT "Other monitors stay enabled. Apply before starting a game.", -1, 140, 308, 198, 27
+  DEFPUSHBUTTON "Save", IDOK, 208, 341, 61, 18
+  PUSHBUTTON "Cancel", IDCANCEL, 275, 341, 61, 18
 END
 
 IDD_CONFIRM DIALOGEX 0, 0, 305, 102
@@ -82,7 +106,7 @@ END
 
 IDD_DIAGNOSTICS DIALOGEX 0, 0, 400, 250
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Nvidia Quick Switch — read-only diagnostics"
+CAPTION "Display Quick Switch — read-only diagnostics"
 FONT 9, "Segoe UI"
 BEGIN
   EDITTEXT IDC_TEXT, 10, 10, 380, 207, ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL

@@ -3,6 +3,7 @@
 #include "backend.h"
 #include "windows_scaling.h"
 #include "monitor_layout.h"
+#include "vendor_driver.h"
 #include <windows.h>
 #include <nvapi.h>
 #include <NvApiDriverSettings.h>
@@ -25,6 +26,7 @@ bool wrongOtherMonitor = false, failRestoreDisplay = false;
 std::map<std::wstring, uint32_t> scales;
 int scaleReads = 0, scaleWrites = 0;
 bool scalingUnavailable = false, failScalingWrite = false, failScalingRestore = false, ignoreScalingWrite = false;
+bool mixed = false, failUniversalReadback = false;
 void reset() {
     displays = {};
     displays[0].source.resolution = {3840, 2160, 32}; displays[0].source.bGDIPrimary = 1;
@@ -41,18 +43,49 @@ void reset() {
     scales = {{L"lcd", 150}, {L"crt", 100}};
     scaleReads = scaleWrites = 0;
     scalingUnavailable = failScalingWrite = failScalingRestore = ignoreScalingWrite = false;
+    mixed = failUniversalReadback = false;
 }
 Session* session(NvDRSSessionHandle h) { return reinterpret_cast<Session*>(h); }
 }
 namespace qs {
-// This suite exercises NVAPI/DRS/DPI only. Layouts have a dedicated fake-CCD suite.
-struct MonitorLayoutTransaction::Impl {};
+// Fake modeset seam for orchestration; real CCD logic has a separate fake-Windows suite.
+struct MonitorLayoutTransaction::Impl { std::array<fake::Display, 2> before; bool dirty = false; };
 MonitorLayoutTransaction::MonitorLayoutTransaction() : impl(std::make_unique<Impl>()) {}
 MonitorLayoutTransaction::~MonitorLayoutTransaction() = default;
 void MonitorLayoutTransaction::apply(const LayoutPreset&) { throw std::runtime_error("Use the dedicated fake-CCD layout test suite."); }
-void MonitorLayoutTransaction::restore() {}
-bool MonitorLayoutTransaction::needsRestore() const { return false; }
-std::vector<Monitor> testMonitors() { return {{L"lcd", L"LCD", L"DISPLAY1", true}, {L"crt", L"CRT", L"DISPLAY2", false}}; }
+void MonitorLayoutTransaction::apply(const Preset& p) {
+    if (fake::failValidation) throw std::runtime_error("Fake CCD validation failure.");
+    impl->before = fake::displays; impl->dirty = true; ++fake::displayWrites;
+    auto i = p.monitor == L"lcd" ? 0 : 1;
+    auto& target = fake::displays[i];
+    if (p.width) target.source.resolution = {p.width, p.height, 32};
+    if (p.refreshMilliHz) target.detail.refreshRate1K = p.refreshMilliHz;
+    if (p.primary) {
+        auto origin = target.source.position;
+        for (int j = 0; j < 2; ++j) { auto& s = fake::displays[j].source; s.position.x -= origin.x; s.position.y -= origin.y; s.bGDIPrimary = j == i; }
+    }
+    if (fake::failDisplayWrite) { fake::failDisplayWrite = false; throw std::runtime_error("Fake partial CCD modeset."); }
+}
+void MonitorLayoutTransaction::restore() {
+    if (!impl->dirty) return;
+    ++fake::displayWrites;
+    if (fake::failRestoreDisplay) throw std::runtime_error("Fake CCD restore failure.");
+    fake::displays = impl->before; impl->dirty = false;
+}
+void MonitorLayoutTransaction::verifyApplied() const { if (fake::failUniversalReadback) throw std::runtime_error("Fake post-driver topology mismatch."); }
+bool MonitorLayoutTransaction::needsRestore() const { return impl->dirty; }
+Preset captureWindows(const Monitor& m) { auto& d = fake::displays[m.key == L"lcd" ? 0 : 1]; Preset p; p.name = m.name; p.monitor = m.key; p.width = d.source.resolution.width; p.height = d.source.resolution.height; p.refreshMilliHz = d.detail.refreshRate1K; return p; }
+std::vector<Monitor> testMonitors() {
+    std::vector<Monitor> out{{L"lcd", L"LCD", L"DISPLAY1", true}, {L"crt", L"CRT", L"DISPLAY2", false}};
+    out[0].vendor = Vendor::nvidia; out[1].vendor = fake::mixed ? Vendor::amd : Vendor::nvidia; return out;
+}
+class MissingVendorApi final : public VendorDriver {
+public:
+    DriverCapabilities capabilities() override { return {}; }
+    void capture(Preset&) override {}
+    void stage(const Preset&) override { throw std::runtime_error("Fake missing vendor API."); }
+};
+std::unique_ptr<VendorDriver> openVendorDriver(const Monitor&) { return std::make_unique<MissingVendorApi>(); }
 uint32_t testDisplayId(const Monitor& m) { return m.key == L"lcd" ? 1 : 2; }
 WindowsScaleInfo windowsScale(const std::wstring& key) {
     ++fake::scaleReads;
@@ -233,6 +266,37 @@ int main() {
         reused.apply(crtPreset()); reused.restore();
         originalDisplay("display-settings undo is not routed to an old failed layout object");
         expect(fake::overrides.empty(), "reused transaction restores driver policy normally");
+        fake::reset(); fake::mixed = true;
+        auto basic = crtPreset(); basic.scaling = qs::Scaling::unchanged; basic.gsync = qs::Gsync::unchanged;
+        basic.vsync = qs::Vsync::unchanged; basic.maxFps = -1; basic.windowsScalePercent = 125; basic.refreshMilliHz = 59940;
+        qs::Transaction amdBasic; amdBasic.apply(basic);
+        expect(fake::calls == 0 && fake::profileWrites == 0 && fake::displays[1].detail.refreshRate1K == 59940 && fake::scales.at(L"crt") == 125,
+            "AMD basic presets need no NVAPI/vendor driver and retain fractional refresh/DPI");
+        amdBasic.restore(); originalDisplay("universal display and DPI undo"); expect(fake::scales.at(L"crt") == 100, "universal DPI restored");
+        fake::reset(); fake::mixed = true;
+        auto unavailablePreset = basic; unavailablePreset.maxFps = 120;
+        qs::Transaction missingApi; rejects([&] { missingApi.apply(unavailablePreset); }, "missing vendor API rejects imported driver request");
+        expect(fake::displayWrites == 0 && fake::scaleReads == 0, "unavailable vendor request fails before any display/DPI edits");
+        fake::reset(); basic.windowsScalePercent = 0;
+        qs::Transaction nvidiaBasic; nvidiaBasic.apply(basic); expect(fake::calls == 0, "basic NVIDIA preset also uses Windows without NVAPI"); nvidiaBasic.restore();
+        fake::reset(); fake::mixed = true;
+        auto policy = crtPreset(); policy.monitor = L"lcd"; policy.scaling = qs::Scaling::unchanged; policy.width = 2560; policy.height = 1440; policy.refreshMilliHz = 59940;
+        fake::overrides[FRL_FPS_ID] = 116; fake::overrides[0x12345678] = 55;
+        auto previousPolicy = fake::overrides;
+        qs::Transaction mixedNvidia; mixedNvidia.apply(policy);
+        expect(fake::overrides[FRL_FPS_ID] == 87 && fake::displays[0].source.resolution.width == 2560, "NVIDIA global policy plus Windows modeset works in mixed topology");
+        mixedNvidia.restore(); originalDisplay("mixed NVIDIA restores Windows display state"); expect(fake::overrides == previousPolicy, "mixed NVIDIA preserves override/default provenance");
+        fake::reset(); fake::mixed = true; fake::failSave = true; fake::failRestoreDisplay = true;
+        qs::Transaction mixedFailure; rejects([&] { mixedFailure.apply(policy); }, "mixed NVIDIA partial policy write failure surfaced");
+        expect(fake::overrides.empty() && mixedFailure.needsRestore(), "universal driver rollback is independent of failed Windows restore");
+        fake::failRestoreDisplay = false; mixedFailure.restore(); originalDisplay("universal display restore retry");
+        fake::reset(); fake::mixed = true; fake::failScalingWrite = true;
+        basic.windowsScalePercent = 125;
+        qs::Transaction universalDpi; rejects([&] { universalDpi.apply(basic); }, "universal partial DPI failure surfaced");
+        originalDisplay("universal DPI failure restores display"); expect(fake::scales.at(L"crt") == 100 && !universalDpi.needsRestore(), "universal DPI failure restores requested scale");
+        fake::reset(); fake::mixed = true; fake::failUniversalReadback = true;
+        qs::Transaction universalReadback; rejects([&] { universalReadback.apply(policy); }, "post-driver topology mismatch aborts universal transaction");
+        originalDisplay("post-driver mismatch restores topology"); expect(fake::overrides.empty(), "post-driver mismatch restores global policy");
     } catch (const std::exception& e) { std::cerr << "Unexpected: " << e.what() << '\n'; ++failures; }
     if (!failures) std::cout << "All backend transaction tests passed using fake NVAPI. No real display or driver writes.\n";
     return failures ? 1 : 0;
