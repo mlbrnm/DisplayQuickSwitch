@@ -2,13 +2,13 @@
 
 A native **Windows x64 tray application** for manually switching display presets on NVIDIA, AMD, Intel and mixed-GPU systems. Written in C++20/Win32; no .NET runtime, browser engine, resident service, or Profile Inspector installation is required. The tray icon uses **#007AFF** blue.
 
-Resolution, refresh rate, primary-monitor selection, monitor layouts and Windows scaling do not require an AMD/Intel SDK. Driver-specific controls are shown only when their backend and runtime capabilities are available; unavailable features are listed in a grey notice in the preset editor. **AMD driver controls are an optional build**, because ADLX has separate SDK licensing and distribution/EULA requirements (see below). NVIDIA and Intel backends are included in the default build.
-
 I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. I'm one of those crazy people who uses a 4K OLED TV as a monitor so I often like to play at alternate resolutions such as 3840x1600 or 3440x1440 ultrawide, and I also sometimes use a small CRT monitor that requires very different settings from a modern display.
 
 <div align="center">
-  <img width="767" height="532" alt="Screenshot 2026-10-11 124506" src="https://github.com/user-attachments/assets/662a4379-8748-4329-a29b-211b8bc2dc0c" />
+  <img width="772" height="527" alt="Screenshot 2026-10-12 115608" src="https://github.com/user-attachments/assets/599f9b1e-b10a-4999-bb2b-ab4f29573ecd" />
 </div>
+
+_Resolution, refresh rate, primary-monitor selection, monitor layouts and Windows scaling do not require an AMD/Intel SDK. Driver-specific controls are shown only when their backend and runtime capabilities are available; unavailable features are listed in a grey notice in the preset editor. **AMD driver controls are an optional build**, because ADLX has separate SDK licensing and distribution/EULA requirements (see below). NVIDIA and Intel backends are included in the default build._
 
 ## Run
 
@@ -33,7 +33,7 @@ Choose **Manage monitor layouts… → New…**, check the monitors to enable, s
 For example, create `Monitor only`, `CRT only`, and `Both — Monitor primary` layouts, then apply a display-settings preset after selecting a layout. At least one monitor must be enabled, and the primary must be enabled. An enabled monitor that is disconnected causes the entire switch to fail before applying changes; an absent monitor marked disabled is harmless. New monitors not recorded in an older layout keep their current enabled state—edit/save the layout to include them explicitly.
 
 ### Included settings
-<img width="1450" height="962" alt="Screenshot 2026-10-10 211258" src="https://github.com/user-attachments/assets/fefc4c57-a2bc-4e45-ac19-966bbba70c59" />
+<img width="1378" height="980" alt="Screenshot 2026-10-12 115639" src="https://github.com/user-attachments/assets/499e4fa1-d2e3-41e2-9ec0-d1b9700f42c6" />
 
 - Optional primary-monitor selection in display-settings presets. Other active monitors remain enabled; their desktop positions are translated so the new primary is at `(0, 0)`.
 - Resolution and refresh rate, with refresh values stored in millihertz (`59.94`, `119.88`, etc.).
@@ -44,7 +44,7 @@ For example, create `Monitor only`, `CRT only`, and `Both — Monitor primary` l
 - GPU frame limiter: disabled or a cap within the runtime driver range/step (up to 1023 FPS in the preset format). NVIDIA uses NVAPI, AMD uses FRTC (optional ADLX build), Intel uses IGCL Frame Limit.
 - **Restore previous settings** after a confirmed switch. One undo snapshot is retained in memory; the next successful switch replaces it.
 - Separate monitor layout presets for enabling/disabling connected monitors and choosing the primary.
-<img width="1475" height="737" alt="Screenshot 2026-10-11 124102" src="https://github.com/user-attachments/assets/f75471eb-74f5-44ab-9f30-8e5a20d7e7a8" />
+<img width="1443" height="720" alt="Screenshot 2026-10-12 115719" src="https://github.com/user-attachments/assets/32a2d3f1-b9b7-4ec1-820c-5c3fc732f5fb" />
 
 - Optional **Start with Windows**, using only the current user's Run registry entry. Off by default; no scheduled task or service.
 
