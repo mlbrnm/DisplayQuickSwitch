@@ -1,6 +1,6 @@
 # Display Quick Switch
 
-A native **Windows x64 tray application** for manually switching display presets on NVIDIA, AMD, Intel and mixed-GPU systems. Written in C++20/Win32; designed to be compact.
+A native **Windows x64 tray application** for manually switching display presets on NVIDIA, AMD, Intel and mixed-GPU systems. Written in C++20/Win32; designed to be compact with no dependencies.
 
 I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. I'm one of those crazy people who uses a 4K OLED TV as a monitor so I often like to play certain types of games at alternate resolutions such as 3840x1600 or 3440x1440 ultrawide, and I also use a small CRT monitor that requires very different settings from a modern display.
 
