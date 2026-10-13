@@ -5,7 +5,7 @@ A native **Windows x64 tray application** for manually switching display presets
 I created this tool because I found keeping track of all the settings while switching monitors or display modes to be a hassle. I'm one of those crazy people who uses a 4K OLED TV as a monitor so I often like to play certain types of games at alternate resolutions such as 3840x1600 or 3440x1440 ultrawide, and I also use a small CRT monitor that requires very different settings from a modern display.
 
 <div align="center">
-  <img width="772" height="527" alt="Screenshot 2026-10-12 115608" src="https://github.com/user-attachments/assets/599f9b1e-b10a-4999-bb2b-ab4f29573ecd" />
+  <img width="791" height="526" alt="Screenshot 2026-10-13 105314" src="https://github.com/user-attachments/assets/825a3617-9603-4090-895c-74472c6fe84a" />
 </div>
 
 _Resolution, refresh rate, primary-monitor selection, monitor layouts and Windows scaling do not require an AMD/Intel SDK. Driver-specific controls are shown only when their backend and runtime capabilities are available; unavailable features are listed in a grey notice in the preset editor. **AMD driver controls are an optional build**, because ADLX has separate SDK licensing and distribution/EULA requirements (see below). NVIDIA and Intel backends are included in the default build._
